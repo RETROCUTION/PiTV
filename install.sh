@@ -107,19 +107,6 @@ run_stage() {
   fi
 }
 
-enable_hifidac=0
-if truthy "${PITV_ENABLE_HIFIDAC:-}"; then
-  enable_hifidac=1
-elif [[ -t 0 && -z "${PITV_NONINTERACTIVE:-}" ]]; then
-  echo
-  echo "Are you using a PCM5102 / HiFiBerry DAC-style sound card for analog audio?"
-  echo "Choose no if you are using HDMI audio or the Pi 3/Pi 4 headphone jack."
-  read -r -p "Enable PCM5102 / HiFiDAC setup? [y/N] " audio_answer
-  if truthy "$audio_answer"; then
-    enable_hifidac=1
-  fi
-fi
-
 : >"$LOG_FILE"
 pi_model="$(detect_pi_model)"
 os_name="$(detect_os_pretty_name)"
@@ -137,6 +124,19 @@ echo
   echo "Architecture: $(uname -m)"
   echo
 } >>"$LOG_FILE"
+
+enable_hifidac=0
+if truthy "${PITV_ENABLE_HIFIDAC:-}"; then
+  enable_hifidac=1
+elif [[ -t 0 && -z "${PITV_NONINTERACTIVE:-}" ]]; then
+  echo
+  echo "Are you using a PCM5102 / HiFiBerry DAC-style sound card for analog audio?"
+  echo "Choose no if you are using HDMI audio or the Pi 3/Pi 4 headphone jack."
+  read -r -p "Enable PCM5102 / HiFiDAC setup? [y/N] " audio_answer
+  if truthy "$audio_answer"; then
+    enable_hifidac=1
+  fi
+fi
 
 sudo -v
 
