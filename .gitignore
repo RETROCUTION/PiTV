@@ -1,0 +1,46 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Local/private snapshots and test output
+backups/
+pi-snapshot/
+reference/
+docs/pitv-mode-shakedown-*.md
+docs/ui-mockups/
+docs/tv-mode-soak-test-plan.md
+docs/video-startup-diagnostics.md
+tools/
+tools/pitv_mode_shakedown.py
+*.log
+*.tmp
+*.tar.gz
+
+# PiTV runtime state/cache
+video_cache.json
+video_cache*.json
+looper_config.json
+looper_config.local.json
+.pitv/
+OMXPlayerRecent/
+
+# Compiled binaries/build artifacts
+*.o
+*.a
+*.so
+*.so.*
+*.bin
+a.out
+
+# Curated runtime payload required by the PiTV installer.
+!third_party/omxplayer/files/omxplayer.bin
+!third_party/omxplayer/libs/*.so
+!third_party/omxplayer/libs/*.so.*
+
+# Never ship core system libraries in the app payload.
+third_party/omxplayer/libs/libc.so.6
+third_party/omxplayer/libs/libpthread.so.0
+third_party/omxplayer/libs/libdl.so.2
+third_party/omxplayer/libs/libm.so.6
+third_party/omxplayer/libs/librt.so.1
+third_party/omxplayer/libs/libresolv.so.2

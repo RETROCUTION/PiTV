@@ -1,0 +1,27 @@
+[Unit]
+Description=USB Video Looper - Config/Menu on tty1 (early)
+After=local-fs.target
+Before=getty@tty1.service
+Conflicts=getty@tty1.service
+Wants=getty.target
+
+[Service]
+Type=simple
+PermissionsStartOnly=true
+ExecStartPre=/bin/chvt 1
+# Load a large, readable console font on tty1 (runs as root)
+ExecStartPre=/bin/sh -c '/usr/bin/setfont /usr/share/consolefonts/Lat15-TerminusBold32x16.psf.gz </dev/tty1 >/dev/tty1 2>&1 || true'
+ExecStartPre=/bin/sh -c '/usr/bin/setterm -blank 0 -powerdown 0 -cursor off -foreground black -background black -clear all </dev/tty1 >/dev/tty1 2>&1 || true'
+User=pi
+WorkingDirectory=/home/pi
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+Environment=TERM=linux
+ExecStart=/usr/bin/python3 -u /home/pi/looperconfig.py
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=getty.target

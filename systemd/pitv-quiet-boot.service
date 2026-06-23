@@ -1,0 +1,12 @@
+[Unit]
+Description=PiTV quiet boot console cleanup
+DefaultDependencies=no
+After=local-fs.target
+Before=looper-menu-tty1.service getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/bin/dmesg --console-off || true; /usr/bin/setterm -blank 0 -powerdown 0 -cursor off -foreground black -background black -clear all </dev/tty1 >/dev/tty1 2>&1 || true'
+
+[Install]
+WantedBy=sysinit.target
