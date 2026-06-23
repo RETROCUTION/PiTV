@@ -29,6 +29,35 @@ truthy() {
   esac
 }
 
+read_first_existing() {
+  for path in "$@"; do
+    if [[ -r "$path" ]]; then
+      tr -d '\0' <"$path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+detect_pi_model() {
+  local model
+  model="$(read_first_existing /proc/device-tree/model /sys/firmware/devicetree/base/model 2>/dev/null || true)"
+  if [[ -n "$model" ]]; then
+    echo "$model"
+  else
+    echo "Unknown Raspberry Pi"
+  fi
+}
+
+detect_os_pretty_name() {
+  if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    echo "${PRETTY_NAME:-Unknown Raspberry Pi OS}"
+  else
+    echo "Unknown Raspberry Pi OS"
+  fi
+}
+
 bar() {
   local current="$1"
   local total="$2"
@@ -92,11 +121,22 @@ elif [[ -t 0 && -z "${PITV_NONINTERACTIVE:-}" ]]; then
 fi
 
 : >"$LOG_FILE"
+pi_model="$(detect_pi_model)"
+os_name="$(detect_os_pretty_name)"
 
 echo
 echo "PiTV Installer"
+echo "Detected: $pi_model"
+echo "OS: $os_name"
 echo "Log: $LOG_FILE"
 echo
+{
+  echo "PiTV installer"
+  echo "Detected model: $pi_model"
+  echo "Detected OS: $os_name"
+  echo "Architecture: $(uname -m)"
+  echo
+} >>"$LOG_FILE"
 
 sudo -v
 

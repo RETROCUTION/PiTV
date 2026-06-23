@@ -15,6 +15,8 @@ command, and boot into the PiTV menu on the next reboot.
 From a fresh Pi with network enabled:
 
 ```bash
+sudo apt update
+sudo apt install -y git
 git clone https://github.com/RETROCUTION/PiTV.git
 cd PiTV
 bash install.sh

@@ -23,6 +23,8 @@ Tested so far:
 On a fresh Raspberry Pi OS Lite install:
 
 ```bash
+sudo apt update
+sudo apt install -y git
 git clone https://github.com/RETROCUTION/PiTV.git
 cd PiTV
 bash install.sh
