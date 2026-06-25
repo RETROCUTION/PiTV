@@ -1812,16 +1812,12 @@ def main():
     elif mode.startswith("VIDEO PLAYER"):
         play_video_player()
     else:
-        # BASIC modes (now support static underlay too)
+        # Looper mode: clean repeat playback, no TV static underlay.
         setup_tty()
-        static_proc = None
         try:
-            if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO):
-                static_proc = play_static_bg_if_needed()  # layer 0, kbd swallowed
-
             insert_proc = None
             if not is_usb_connected():
-                insert_proc = safe_play(FALLBACK_VIDEO, loop=True, pos=None, layer=foreground_layer(), kbd="swallow")
+                insert_proc = safe_play(FALLBACK_VIDEO, loop=True, pos=None, layer=None, kbd="swallow")
                 println("Please insert USB...")
             while True:
                 if EXIT_REQUESTED: break
@@ -1835,11 +1831,9 @@ def main():
                 play_loop_basic()
                 if EXIT_REQUESTED: break
                 unmount_usb()
-                insert_proc = safe_play(FALLBACK_VIDEO, loop=True, pos=None, layer=foreground_layer(), kbd="swallow")
+                insert_proc = safe_play(FALLBACK_VIDEO, loop=True, pos=None, layer=None, kbd="swallow")
                 println("Please insert USB...")
         finally:
-            if static_proc:
-                stop_proc(static_proc, fast=True)
             restore_tty()
 
 if __name__ == "__main__":

@@ -399,11 +399,16 @@ def home_rows(cfg):
 
 def clean_label(label):
     text = str(label).replace("*", "").strip()
+    if text.startswith("~"):
+        text = text[1:].strip()
     while text.endswith(">"):
         text = text[:-1].strip()
     if text.startswith(">"):
         text = text[1:].strip()
     return text
+
+def row_disabled(label):
+    return str(label).lstrip().startswith("~")
 
 def mode_config_rows(cfg, edit_field=None, edit_text=""):
     home_mode = current_home_mode(cfg)
@@ -423,13 +428,14 @@ def mode_config_rows(cfg, edit_field=None, edit_text=""):
             ("Max Sec", duration_value("channel_max_seconds", cfg["channel_max_seconds"])),
         ]
     elif home_mode == "LOOPER":
+        order_label = "~Playback Order >" if cfg["shuffle_videos"] else "Playback Order >"
+        order_value = "Shuffle ON" if cfg["shuffle_videos"] else selected_video_summary(cfg)
         rows = [
             ("Folder >", f"{selected_folder_summary(cfg)}"),
             ("Videos >", f"{selected_video_summary(cfg)}"),
-            ("Playback Order >", f"{selected_video_summary(cfg)}"),
+            (order_label, order_value),
             ("Display", f"{display_profile(cfg)}"),
             ("Shuffle", bool_txt(cfg["shuffle_videos"]).strip()),
-            ("Static", bool_txt(cfg["static_background"]).strip()),
         ]
     else:
         rows = [
@@ -527,6 +533,7 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
 
     def format_row(label, value, selected=False):
         marker = ">" if selected else " "
+        disabled = row_disabled(label)
         label = clean_label(str(label))
         value = str(value)
         available = max(8, width - 2)
@@ -549,7 +556,11 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
             y += 1
         label, value = rows[idx]
         selected = idx == sel_idx
-        row_attr = attr(PAIR_HILITE, curses.A_BOLD) if selected else attr(PAIR_NORMAL)
+        disabled = row_disabled(label)
+        if disabled:
+            row_attr = attr(PAIR_DIM)
+        else:
+            row_attr = attr(PAIR_HILITE, curses.A_BOLD) if selected else attr(PAIR_NORMAL)
         put(y, format_row(label, value, selected), row_attr)
         y += 1
     if end < len(rows) and y < last_row:
@@ -1203,6 +1214,8 @@ def run_menu(stdscr):
         # Change values (left/right)
         elif ch in (curses.KEY_LEFT, curses.KEY_RIGHT):
             label, value = selectable[sel]
+            if row_disabled(label):
+                continue
             clean = clean_label(label)
             step = -1 if ch == curses.KEY_LEFT else 1
             finalize_duration_edit()
@@ -1242,6 +1255,7 @@ def run_menu(stdscr):
         # Activate (ENTER)
         elif ch in (curses.KEY_ENTER, 10, 13):
             label, _ = selectable[sel]
+            disabled = row_disabled(label)
             clean = clean_label(label)
             finalize_duration_edit()
 
@@ -1276,6 +1290,9 @@ def run_menu(stdscr):
                     )
                     continue
                 if clean == "Playback Order":
+                    if disabled:
+                        popup_wait_key(stdscr, "PLAYBACK ORDER", ["Turn Shuffle OFF to edit order."])
+                        continue
                     stdscr.timeout(-1)
                     cfg["selected_videos"] = playback_order_editor(stdscr, cfg.get("selected_videos", []))
                     continue
