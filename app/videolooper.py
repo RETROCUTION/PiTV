@@ -1135,6 +1135,33 @@ def live_tv_loop():
     playlist = build_playlist()
     if not playlist:
         println("[ERROR] No videos found."); return
+
+    static_proc = None
+    static_start_mono = None
+    static_duration = 0.0
+
+    def start_static_background(reason):
+        nonlocal static_proc, static_start_mono, static_duration
+        if not (STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO)):
+            return
+        if static_proc and static_proc.poll() is None:
+            return
+        static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow")
+        static_start_mono = time.monotonic()
+        static_duration = 0.0
+        log_event("static_background_started", reason=reason)
+
+        def duration_worker():
+            nonlocal static_duration
+            d = ffprobe_duration(STATIC_VIDEO)
+            static_duration = d
+            if d > 0:
+                log_event("static_duration_ready", duration=round(d, 3))
+
+        threading.Thread(target=duration_worker, daemon=True).start()
+
+    start_static_background("tv_start")
+
     log_event("tv_mode_start", files=len(playlist), shuffle=bool(SHUFFLE_VIDEOS), surfing=bool(CHANNEL_SURFING))
 
     # Prime one duration so playback can begin quickly; scan the rest in the background.
@@ -1146,12 +1173,16 @@ def live_tv_loop():
     tv_playlist = known_duration_playlist(playlist)
     if not tv_playlist:
         log_event("tv_mode_error", reason="no_valid_durations")
+        if static_proc:
+            stop_proc(static_proc, fast=True)
         println("[ERROR] No valid durations."); return
 
     # Precompute per-title start_offsets (each title loops independently)
     start_offsets, total_len = compute_start_offsets(tv_playlist)
     if total_len <= 0:
         log_event("tv_mode_error", reason="zero_total_duration")
+        if static_proc:
+            stop_proc(static_proc, fast=True)
         println("[ERROR] No valid durations."); return
     known_signature = tuple(tv_playlist)
     log_event("tv_timing_ready", known=len(tv_playlist), total_seconds=round(total_len, 3))
@@ -1220,14 +1251,6 @@ def live_tv_loop():
         selected_path = current_path if current_path in tv_playlist else tv_playlist[channel_index % len(tv_playlist)]
         if save_tv_state(clock_started_at, elapsed_now, channel_index, tv_playlist, selected_path):
             last_state_save = now
-
-    static_proc = None
-    static_start_mono = None
-    static_duration = 0.0
-    if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO):
-        static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow")
-        static_start_mono = time.monotonic()
-        static_duration = ffprobe_duration(STATIC_VIDEO)
 
     def static_loop_guard_active(at_time=None):
         if not static_proc or not static_start_mono or static_duration <= (STATIC_LOOP_GUARD_SECONDS * 4):
@@ -1320,11 +1343,7 @@ def live_tv_loop():
                 ensure_usb_state_dir()
                 load_usb_cache()
                 load_blacklist()
-                if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO) and not static_proc:
-                    static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow")
-                    static_start_mono = time.monotonic()
-                    static_duration = ffprobe_duration(STATIC_VIDEO)
-                    log_event("static_background_started", reason="usb_restored")
+                start_static_background("usb_restored")
 
                 discovered_list = build_playlist()
                 added, removed = playlist_diff(playlist, discovered_list)
