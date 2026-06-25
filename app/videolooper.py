@@ -1249,19 +1249,20 @@ def live_tv_loop():
             # timekeeping
             elapsed = (time.monotonic() - live_anchor) if running else paused_at
 
-            # Keys: ESC/Q => exit; N => advance view offset (no rotation, no anchor edits)
+            # Keys: ESC/Q => exit; N/B => move through the current TV order.
             k = read_key(0.05)
             if k:
                 if k == "ESC" or k in ("q","Q"):
                     EXIT_REQUESTED = True
                     stop_proc(current_proc)
                     break
-                if not CHANNEL_SURFING and k in ("n","N"):
-                    if tv_playlist:
-                        channel_index = (channel_index + 1) % len(tv_playlist)
-                        current_path = None
-                        surf_deadline = schedule_surf_deadline()
-                        log_event("channel_change", reason="manual_n", channel_index=channel_index)
+                if not CHANNEL_SURFING and tv_playlist and k in ("n", "N", "b", "B"):
+                    step = -1 if k in ("b", "B") else 1
+                    reason = "manual_b" if step < 0 else "manual_n"
+                    channel_index = (channel_index + step) % len(tv_playlist)
+                    current_path = None
+                    surf_deadline = schedule_surf_deadline()
+                    log_event("channel_change", reason=reason, channel_index=channel_index)
 
             # USB removal handling
             if not is_usb_connected():
