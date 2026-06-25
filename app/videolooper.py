@@ -8,6 +8,8 @@ BASIC_VIDEO_LOOPER     = 0   # Standard HDMI looper
 BASIC_VIDEO_LOOPER_CRT = 0   # Same, but --aspect-mode fill
 LIVE_TV_HD             = 0   # Live TV global-time looper (HD)
 LIVE_TV_CRT            = 1   # Live TV global-time looper with --aspect-mode fill
+VIDEO_PLAYER           = 0   # One selected file with full OMXPlayer keyboard controls
+VIDEO_PLAYER_CRT       = 0   # Same, but --aspect-mode fill
 
 STATIC_BACKGROUND = 1        # 0=off, 1=on
 SHUFFLE_VIDEOS   = 1
@@ -25,6 +27,8 @@ AUDIO_OUTPUT = "default"
 
 # NEW: selected folders list (written by the config menu). "ROOT" means /mnt/usb itself.
 SELECTED_FOLDERS = ["ROOT"]
+SELECTED_VIDEO_FILES = []
+PLAYER_FILE = ""
 # ==========================
 # END USER CONFIGURATION
 # ==========================
@@ -53,9 +57,9 @@ OMX_FLAGS_BASE = ["omxplayer", "-a", "--limited-osd", "--font-size", "110"]  # -
 
 # --------- apply config file overrides (if present) ----------
 def load_apply_config():
-    global BASIC_VIDEO_LOOPER, BASIC_VIDEO_LOOPER_CRT, LIVE_TV_HD, LIVE_TV_CRT
+    global BASIC_VIDEO_LOOPER, BASIC_VIDEO_LOOPER_CRT, LIVE_TV_HD, LIVE_TV_CRT, VIDEO_PLAYER, VIDEO_PLAYER_CRT
     global STATIC_BACKGROUND, SHUFFLE_VIDEOS, CHANNEL_SURFING, CHANNEL_MIN_SECONDS, CHANNEL_MAX_SECONDS
-    global AUDIO_OUTPUT, SELECTED_FOLDERS
+    global AUDIO_OUTPUT, SELECTED_FOLDERS, SELECTED_VIDEO_FILES, PLAYER_FILE
 
     try:
         with open(CONFIG_PATH, "r") as f:
@@ -64,11 +68,13 @@ def load_apply_config():
         cfg = {}
 
     mode = cfg.get("mode")
-    if mode in ("BASIC","BASIC_CRT","LIVE_TV","LIVE_TV_CRT"):
+    if mode in ("BASIC","BASIC_CRT","LIVE_TV","LIVE_TV_CRT","VIDEO_PLAYER","VIDEO_PLAYER_CRT"):
         BASIC_VIDEO_LOOPER     = 1 if mode=="BASIC" else 0
         BASIC_VIDEO_LOOPER_CRT = 1 if mode=="BASIC_CRT" else 0
         LIVE_TV_HD             = 1 if mode=="LIVE_TV" else 0
         LIVE_TV_CRT            = 1 if mode=="LIVE_TV_CRT" else 0
+        VIDEO_PLAYER           = 1 if mode=="VIDEO_PLAYER" else 0
+        VIDEO_PLAYER_CRT       = 1 if mode=="VIDEO_PLAYER_CRT" else 0
 
     STATIC_BACKGROUND = 1 if bool(cfg.get("static_background", STATIC_BACKGROUND)) else 0
     SHUFFLE_VIDEOS    = 1 if bool(cfg.get("shuffle_videos", SHUFFLE_VIDEOS)) else 0
@@ -92,12 +98,18 @@ def load_apply_config():
     else:
         SELECTED_FOLDERS = ["ROOT"]
 
+    vids = cfg.get("selected_videos", SELECTED_VIDEO_FILES)
+    SELECTED_VIDEO_FILES = [str(x) for x in vids] if isinstance(vids, list) else []
+    PLAYER_FILE = str(cfg.get("player_file", PLAYER_FILE) or "")
+
 def active_mode():
     sel = {
         "BASIC": BASIC_VIDEO_LOOPER,
         "BASIC (CRT)": BASIC_VIDEO_LOOPER_CRT,
         "LIVE TV": LIVE_TV_HD,
-        "LIVE TV (CRT)": LIVE_TV_CRT
+        "LIVE TV (CRT)": LIVE_TV_CRT,
+        "VIDEO PLAYER": VIDEO_PLAYER,
+        "VIDEO PLAYER (CRT)": VIDEO_PLAYER_CRT,
     }
     if sum(sel.values()) != 1:
         return "BASIC"
@@ -373,6 +385,23 @@ def get_video_files():
     try:
         if not os.path.isdir(MOUNT_PATH):
             return []
+
+        mode = active_mode()
+        if mode.startswith("VIDEO PLAYER"):
+            player_path = resolve_usb_video(PLAYER_FILE)
+            return [player_path] if player_path else []
+
+        if mode.startswith("BASIC") and SELECTED_VIDEO_FILES:
+            selected = []
+            seen_selected = set()
+            for rel in SELECTED_VIDEO_FILES:
+                p = resolve_usb_video(rel)
+                if p and p not in seen_selected:
+                    selected.append(p)
+                    seen_selected.add(p)
+            if selected:
+                return sorted(selected)
+
         files = []
         seen  = set()
 
@@ -404,6 +433,24 @@ def get_video_files():
         return sorted(files)
     except Exception:
         return []
+
+def resolve_usb_video(rel_path):
+    if not rel_path:
+        return None
+    if os.path.isabs(rel_path):
+        p = rel_path
+    else:
+        p = os.path.normpath(os.path.join(MOUNT_PATH, rel_path))
+    try:
+        root = os.path.abspath(MOUNT_PATH)
+        ap = os.path.abspath(p)
+        if ap != root and not ap.startswith(root + os.sep):
+            return None
+        if os.path.isfile(ap) and ap.lower().endswith(VIDEO_FORMATS):
+            return ap
+    except Exception:
+        pass
+    return None
 
 def filtered_video_files(files):
     with blacklist_lock:
@@ -1025,6 +1072,43 @@ def play_loop_basic():
                 if EXIT_REQUESTED: return
                 continue
         # repeat forever
+
+def play_video_player():
+    """Play one selected file and give OMXPlayer direct keyboard control."""
+    global EXIT_REQUESTED
+    vids = get_video_files()
+    if not vids:
+        println("[ERROR] No video selected for Video Player.")
+        time.sleep(2)
+        return
+    path = vids[0]
+    println(f"[VIDEO PLAYER] {os.path.basename(path)}")
+    proc = play_omx(path, loop=False, pos=None, layer=None, kbd="inherit")
+    log_event(
+        "play_start",
+        mode=active_mode(),
+        file=os.path.basename(path),
+        ext=os.path.splitext(path)[1].lower(),
+        size_mb=file_size_mb(path),
+        reason="video_player",
+        launch_ms=getattr(proc, "pitv_launch_ms", None),
+    )
+    log_diag(
+        "play_start",
+        mode=active_mode(),
+        file=os.path.basename(path),
+        path=path,
+        ext=os.path.splitext(path)[1].lower(),
+        size_mb=file_size_mb(path),
+        reason="video_player",
+        launch_ms=getattr(proc, "pitv_launch_ms", None),
+    )
+    probe_startup(proc, path, "video_player", 0)
+    while proc.poll() is None:
+        if not is_usb_connected() and path.startswith(MOUNT_PATH):
+            stop_proc(proc)
+            return
+        time.sleep(0.2)
 
 # ---------- LIVE TV (global time with per-title clocks) ----------
 def build_playlist():
@@ -1725,6 +1809,8 @@ def main():
 
     if mode.startswith("LIVE TV"):
         live_tv_loop()
+    elif mode.startswith("VIDEO PLAYER"):
+        play_video_player()
     else:
         # BASIC modes (now support static underlay too)
         setup_tty()

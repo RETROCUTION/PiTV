@@ -2,7 +2,7 @@
 
 PiTV is a Raspberry Pi video looper and lightweight media player built around a
 custom OMXPlayer runtime. It is designed to boot into a simple on-device menu,
-play from a USB drive, and support both practical exhibition looping and a
+play from a USB drive, and support practical looping, hands-on playback, and a
 more playful TV-style mode.
 
 ## Current Status
@@ -49,10 +49,10 @@ then select `START PITV`.
 
 - **TV Mode**: switches between selected videos while keeping a live-style
   timeline, so videos continue to elapse even when not currently on screen.
-- **Looper**: plays selected videos all the way through and loops them.
-- **Exhibition**: intended for controlled displays where a user selects a
-  specific video or curated folder set.
-- **Media Player**: planned as a lightweight browse-and-play mode.
+- **Looper**: plays selected videos all the way through and loops them until
+  the user stops playback.
+- **Video Player**: plays one selected video with normal OMXPlayer keyboard
+  controls.
 
 ## Notes
 

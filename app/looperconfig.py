@@ -7,7 +7,7 @@ MOUNT_PATH  = "/mnt/usb"  # used to list folders for the picker
 
 # ========= Defaults (used for first boot and after "Delete Config") =========
 DEFAULTS = {
-    "mode": "BASIC",             # BASIC, BASIC_CRT, LIVE_TV, LIVE_TV_CRT
+    "mode": "BASIC",             # BASIC, BASIC_CRT, LIVE_TV, LIVE_TV_CRT, VIDEO_PLAYER, VIDEO_PLAYER_CRT
     "static_background": False,  # OFF by default (clean baseline)
     "shuffle_videos": False,     # OFF by default
     "channel_surfing": False,    # OFF by default
@@ -15,10 +15,12 @@ DEFAULTS = {
     "channel_max_seconds": 20,
     "audio_output": "DEFAULT",   # DEFAULT or ALSA
     "folders": ["ROOT"],         # NEW: which folders to play from (ROOT = USB root)
+    "selected_videos": [],        # Looper: exact video choices, relative to USB root
+    "player_file": "",           # Video Player: single video, relative to USB root
 }
 
-MODES = ["BASIC", "BASIC_CRT", "LIVE_TV", "LIVE_TV_CRT"]
-HOME_MODES = ["TV", "LOOPER", "EXHIBITION", "MEDIA PLAYER"]
+MODES = ["BASIC", "BASIC_CRT", "LIVE_TV", "LIVE_TV_CRT", "VIDEO_PLAYER", "VIDEO_PLAYER_CRT"]
+HOME_MODES = ["TV", "LOOPER", "VIDEO PLAYER"]
 AUDIO_CHOICES = ["DEFAULT", "ALSA"]
 VIDEO_FORMATS = (".mp4", ".mkv", ".mov", ".avi", ".m4v")
 USB_STATE_DIR_NAME = ".pitv"
@@ -27,31 +29,33 @@ HIDDEN_FOLDER_NAMES = {"omxplayerrecent", USB_STATE_DIR_NAME, "system volume inf
 USB_CACHE_FOLDERS = ("OMXPlayerRecent", USB_STATE_DIR_NAME)
 
 MODE_LABELS = {
-    "BASIC": "EXHIBITION LOOP - HD",
-    "BASIC_CRT": "EXHIBITION LOOP - CRT",
+    "BASIC": "LOOPER - HD",
+    "BASIC_CRT": "LOOPER - CRT",
     "LIVE_TV": "TV MODE - HD",
     "LIVE_TV_CRT": "TV MODE - CRT",
+    "VIDEO_PLAYER": "VIDEO PLAYER - HD",
+    "VIDEO_PLAYER_CRT": "VIDEO PLAYER - CRT",
 }
 
 MODE_HELP = {
-    "BASIC": "Loop selected videos for galleries, booths, and displays.",
-    "BASIC_CRT": "Loop selected videos with CRT-style fill.",
+    "BASIC": "Loop selected videos or folders all the way through.",
+    "BASIC_CRT": "Loop selected videos or folders with CRT-style fill.",
     "LIVE_TV": "Videos keep time like channels on a TV.",
     "LIVE_TV_CRT": "CRT channel-surf TV with videos keeping time.",
+    "VIDEO_PLAYER": "Play one selected file with OMXPlayer controls.",
+    "VIDEO_PLAYER_CRT": "Play one selected file with CRT-style fill.",
 }
 
 MODE_PRESETS = {
     "TV": "LIVE_TV_CRT",
     "LOOPER": "BASIC_CRT",
-    "EXHIBITION": "BASIC",
+    "VIDEO PLAYER": "VIDEO_PLAYER_CRT",
 }
 
 MODE_DESCRIPTIONS = {
     "TV": "Live timeline video switching.",
-    "LOOPER": "Simple repeat playback.",
-    "EXHIBITION": "Controlled display playback.",
-    "MEDIA PLAYER": "Browse USB videos, music, pictures.",
-    "SLIDESHOW": "Image loop for signs and menus.",
+    "LOOPER": "Repeat selected videos all the way through.",
+    "VIDEO PLAYER": "Play one file with OMXPlayer controls.",
 }
 
 SURF_MIN_LIMIT = 5
@@ -167,6 +171,10 @@ def load_config():
     # folders list
     if not isinstance(cfg.get("folders"), list) or not cfg["folders"]:
         cfg["folders"] = ["ROOT"]
+    if not isinstance(cfg.get("selected_videos"), list):
+        cfg["selected_videos"] = []
+    cfg["selected_videos"] = [str(x) for x in cfg["selected_videos"] if str(x).strip()]
+    cfg["player_file"] = str(cfg.get("player_file", "") or "")
     # clamp
     clamp_surf_pair(cfg)
     return cfg
@@ -195,9 +203,9 @@ def current_home_mode(cfg):
     mode = cfg.get("mode")
     if mode in ("LIVE_TV", "LIVE_TV_CRT"):
         return "TV"
-    if mode == "BASIC_CRT":
-        return "LOOPER"
-    return "EXHIBITION"
+    if mode in ("VIDEO_PLAYER", "VIDEO_PLAYER_CRT"):
+        return "VIDEO PLAYER"
+    return "LOOPER"
 
 def set_home_mode(cfg, home_mode):
     if home_mode in MODE_PRESETS:
@@ -214,6 +222,8 @@ def set_display_profile(cfg, profile):
         cfg["mode"] = "LIVE_TV_CRT" if wants_crt else "LIVE_TV"
     elif mode.startswith("BASIC"):
         cfg["mode"] = "BASIC_CRT" if wants_crt else "BASIC"
+    elif mode.startswith("VIDEO_PLAYER"):
+        cfg["mode"] = "VIDEO_PLAYER_CRT" if wants_crt else "VIDEO_PLAYER"
 
 def toggle_display_profile(cfg):
     set_display_profile(cfg, "HD FIT" if display_profile(cfg) == "CRT FILL" else "CRT FILL")
@@ -233,7 +243,19 @@ def selected_folder_summary(cfg):
         show.insert(0, "ROOT")
     if len(show) <= 3:
         return ", ".join(show)
-        return ", ".join(show[:2]) + f", +{len(show)-2}"
+    return ", ".join(show[:2]) + f", +{len(show)-2}"
+
+def selected_video_summary(cfg):
+    vids = [v for v in cfg.get("selected_videos", []) if v]
+    if not vids:
+        return "Folders"
+    if len(vids) == 1:
+        return os.path.basename(vids[0])
+    return f"{len(vids)} videos"
+
+def player_file_summary(cfg):
+    p = cfg.get("player_file", "")
+    return os.path.basename(p) if p else "Choose file"
 
 def is_usb_mounted():
     try:
@@ -357,12 +379,18 @@ def mode_config_rows(cfg, edit_field=None, edit_text=""):
             ("Min Sec", duration_value("channel_min_seconds", cfg["channel_min_seconds"])),
             ("Max Sec", duration_value("channel_max_seconds", cfg["channel_max_seconds"])),
         ]
-    else:
+    elif home_mode == "LOOPER":
         rows = [
+            ("Videos >", f"{selected_video_summary(cfg)}"),
             ("Folders >", f"{selected_folder_summary(cfg)}"),
             ("Display", f"{display_profile(cfg)}"),
             ("Shuffle", bool_txt(cfg["shuffle_videos"]).strip()),
             ("Static", bool_txt(cfg["static_background"]).strip()),
+        ]
+    else:
+        rows = [
+            ("Video >", f"{player_file_summary(cfg)}"),
+            ("Display", f"{display_profile(cfg)}"),
         ]
     actions = [(f"START {home_mode}",""), ("BACK","")]
     return rows, actions, 1
@@ -631,6 +659,37 @@ def list_usb_folders():
         pass
     return items
 
+def list_usb_videos():
+    """Return video file paths relative to the USB root."""
+    items = []
+    mount_usb_for_menu()
+
+    def add_from_dir(root, prefix=""):
+        try:
+            for name in sorted(os.listdir(root)):
+                fl = name.lower()
+                if _is_osx_junk(fl):
+                    continue
+                p = os.path.join(root, name)
+                if os.path.isfile(p) and fl.endswith(VIDEO_FORMATS):
+                    rel = os.path.join(prefix, name) if prefix else name
+                    items.append(rel)
+        except Exception:
+            pass
+
+    add_from_dir(MOUNT_PATH)
+    try:
+        for folder in sorted(os.listdir(MOUNT_PATH)):
+            fl = folder.lower()
+            if _is_osx_junk(fl) or fl in HIDDEN_FOLDER_NAMES:
+                continue
+            p = os.path.join(MOUNT_PATH, folder)
+            if os.path.isdir(p):
+                add_from_dir(p, folder)
+    except Exception:
+        pass
+    return items
+
 def folder_picker(stdscr, initial_selected):
     """
     Multi-select UI. Returns a list of names (e.g., ['ROOT','channel_2',...]).
@@ -679,6 +738,65 @@ def folder_picker(stdscr, initial_selected):
                     return initial_selected
         elif ch in (27,):  # ESC
             return initial_selected
+
+def video_picker(stdscr, initial_selected=None, multi=True):
+    """Pick one or more videos from USB. Returns list for multi, string for single."""
+    options = list_usb_videos()
+    if not options:
+        popup_wait_key(stdscr, "VIDEOS", ["No video files found on USB."])
+        return (initial_selected or []) if multi else (initial_selected or "")
+
+    if multi:
+        selected = set(initial_selected or [])
+    else:
+        selected = {initial_selected} if initial_selected else set()
+    sel_idx = 0
+
+    while True:
+        rows_top = []
+        for rel in options:
+            mark = "x" if rel in selected else " "
+            name = os.path.basename(rel)
+            parent = os.path.dirname(rel)
+            label = f"[{mark}] {name}" if multi else name
+            value = parent if parent else "ROOT"
+            rows_top.append((label, value))
+
+        rows_bottom = [("DONE",""), ("CLEAR",""), ("BACK","")] if multi else [("CLEAR",""), ("BACK","")]
+        title = "SELECT VIDEOS" if multi else "SELECT VIDEO"
+        draw_box(stdscr, title, rows_top, rows_bottom, sel_idx)
+
+        ch = stdscr.getch()
+        total = len(rows_top) + len(rows_bottom)
+        if ch in (curses.KEY_UP, ord('k')):
+            sel_idx = (sel_idx - 1) % total
+        elif ch in (curses.KEY_DOWN, ord('j')):
+            sel_idx = (sel_idx + 1) % total
+        elif multi and ch in (ord('a'), ord('A')):
+            selected = set(options)
+        elif ch in (curses.KEY_ENTER, 10, 13, ord(' ')):
+            if sel_idx < len(rows_top):
+                rel = options[sel_idx]
+                if multi:
+                    if rel in selected:
+                        selected.remove(rel)
+                    else:
+                        selected.add(rel)
+                else:
+                    return rel
+            else:
+                label = rows_bottom[sel_idx - len(rows_top)][0]
+                if label == "DONE":
+                    return [rel for rel in options if rel in selected]
+                if label == "CLEAR":
+                    if multi:
+                        selected = set()
+                    else:
+                        return ""
+                if label == "BACK":
+                    return (initial_selected or []) if multi else (initial_selected or "")
+        elif ch in (27,):
+            return (initial_selected or []) if multi else (initial_selected or "")
 
 # ---------- Actions & helpers ----------
 def kill_omx_leftovers():
@@ -1019,14 +1137,8 @@ def run_menu(stdscr):
 
             if page == "home":
                 if clean in HOME_MODES:
-                    if clean in MODE_PRESETS:
-                        set_home_mode(cfg, clean)
-                        page, sel = "mode", 0
-                    else:
-                        popup_wait_key(stdscr, clean, [
-                            "This mode is on the roadmap.",
-                            "For now, TV / Looper / Exhibition are ready."
-                        ])
+                    set_home_mode(cfg, clean)
+                    page, sel = "mode", 0
                     continue
                 if clean == "OPTIONS":
                     page, sel = "more", 0
@@ -1048,7 +1160,16 @@ def run_menu(stdscr):
                     new_sel = folder_picker(stdscr, cfg.get("folders", ["ROOT"]))
                     cfg["folders"] = new_sel if new_sel else ["ROOT"]
                     continue
+                if clean == "Videos":
+                    cfg["selected_videos"] = video_picker(stdscr, cfg.get("selected_videos", []), multi=True)
+                    continue
+                if clean == "Video":
+                    cfg["player_file"] = video_picker(stdscr, cfg.get("player_file", ""), multi=False)
+                    continue
                 if clean.startswith("START "):
+                    if hm == "VIDEO PLAYER" and not cfg.get("player_file"):
+                        popup_wait_key(stdscr, "VIDEO PLAYER", ["Choose a video file first."])
+                        continue
                     save_config(cfg)
                     launch_looper_and_wait(stdscr)
                     cfg = load_config()
