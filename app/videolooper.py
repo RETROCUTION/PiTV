@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, time, subprocess, random, threading, json, signal, select, tty, termios, hashlib
+import os, sys, time, subprocess, random, threading, json, signal, select, tty, termios, hashlib, glob
 
 # ==========================
 # USER CONFIGURATION (defaults — may be overridden by looper_config.json)
@@ -17,6 +17,8 @@ CHANNEL_MAX_SECONDS = 20
 END_GUARD_SECONDS = 3.0
 WRAP_SURF_COALESCE_SECONDS = 1.0
 PLAYLIST_RESCAN_SECONDS = 30.0
+USB_RECOVERY_FIRST_ATTEMPT_SECONDS = 30.0
+USB_RECOVERY_RETRY_SECONDS = 300.0
 
 # NEW: audio output mode: "default" (no -o) or "alsa" (-o alsa)
 AUDIO_OUTPUT = "default"
@@ -191,6 +193,137 @@ def find_usb_partition():
     except Exception:
         pass
     return None
+
+def _read_text(path):
+    try:
+        with open(path, "r") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+def usb_storage_sysfs_devices():
+    """Return USB device sysfs dirs that expose a mass-storage interface."""
+    devices = []
+    try:
+        for dev_path in sorted(glob.glob("/sys/bus/usb/devices/*")):
+            dev = os.path.basename(dev_path)
+            if ":" in dev:
+                continue
+            for iface_path in glob.glob(os.path.join(dev_path, f"{dev}:*")):
+                if _read_text(os.path.join(iface_path, "bInterfaceClass")).lower() == "08":
+                    devices.append(dev_path)
+                    break
+    except Exception:
+        pass
+    return devices
+
+def rescan_usb_storage():
+    for host in sorted(glob.glob("/sys/class/scsi_host/host*")):
+        scan = os.path.join(host, "scan")
+        try:
+            subprocess.run(
+                ["sudo", "tee", scan],
+                input="- - -\n",
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=4,
+            )
+        except Exception:
+            pass
+    try:
+        subprocess.run(["udevadm", "settle", "--timeout=5"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=6)
+    except Exception:
+        pass
+
+def reset_usb_storage_device(dev_path):
+    auth = os.path.join(dev_path, "authorized")
+    if not os.path.exists(auth):
+        return False
+    try:
+        subprocess.run(
+            ["sudo", "tee", auth],
+            input="0\n",
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+        time.sleep(1.0)
+        subprocess.run(
+            ["sudo", "tee", auth],
+            input="1\n",
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+        return True
+    except Exception:
+        return False
+
+def attempt_usb_recovery(reason, attempt, missing_seconds):
+    dev_before = find_usb_partition()
+    storage_devs = usb_storage_sysfs_devices()
+    log_event(
+        "usb_recovery_attempt",
+        reason=reason,
+        attempt=attempt,
+        missing_seconds=round(missing_seconds, 1),
+        block_device=dev_before,
+        storage_devices=[os.path.basename(p) for p in storage_devs],
+    )
+
+    rescan_usb_storage()
+    if mount_usb():
+        log_event("usb_recovery_success", reason=reason, attempt=attempt, method="scsi_rescan")
+        return True
+
+    reset_any = False
+    for dev_path in storage_devs:
+        if reset_usb_storage_device(dev_path):
+            reset_any = True
+            log_event(
+                "usb_storage_reset",
+                reason=reason,
+                attempt=attempt,
+                device=os.path.basename(dev_path),
+            )
+            time.sleep(2.0)
+            rescan_usb_storage()
+            if mount_usb():
+                log_event(
+                    "usb_recovery_success",
+                    reason=reason,
+                    attempt=attempt,
+                    method="usb_authorized_reset",
+                    device=os.path.basename(dev_path),
+                )
+                return True
+
+    log_event(
+        "usb_recovery_waiting",
+        reason=reason,
+        attempt=attempt,
+        reset_attempted=reset_any,
+    )
+    return False
+
+def wait_for_usb_restore(reason):
+    missing_since = time.monotonic()
+    next_recovery = missing_since + USB_RECOVERY_FIRST_ATTEMPT_SECONDS
+    attempts = 0
+    while True:
+        if is_usb_connected() or mount_usb():
+            return True
+        now = time.monotonic()
+        if now >= next_recovery:
+            attempts += 1
+            if attempt_usb_recovery(reason, attempts, now - missing_since):
+                return True
+            next_recovery = now + USB_RECOVERY_RETRY_SECONDS
+        time.sleep(1)
 
 def mount_usb():
     if os.path.ismount(MOUNT_PATH):
@@ -1170,9 +1303,7 @@ def live_tv_loop():
                 if os.path.exists(FALLBACK_VIDEO):
                     fb = safe_play(FALLBACK_VIDEO, loop=True, layer=foreground_layer(), kbd="swallow")
 
-                while True:
-                    if is_usb_connected() or mount_usb(): break
-                    time.sleep(1)
+                wait_for_usb_restore("live_tv_usb_removed")
                 if fb: stop_proc(fb)
                 ensure_usb_state_dir()
                 load_usb_cache()
@@ -1522,10 +1653,7 @@ def play_fallback_until_usb():
     if os.path.exists(FALLBACK_VIDEO):
         fb = safe_play(FALLBACK_VIDEO, loop=True, pos=None, layer=foreground_layer(), kbd="swallow")
     println("Please insert USB...")
-    while True:
-        if is_usb_connected() or mount_usb():
-            break
-        time.sleep(1)
+    wait_for_usb_restore("startup_fallback")
     ensure_usb_state_dir()
     load_usb_cache()
     load_blacklist()
@@ -1581,8 +1709,7 @@ def main():
             while True:
                 if EXIT_REQUESTED: break
                 while not is_usb_connected():
-                    if mount_usb(): break
-                    time.sleep(1)
+                    wait_for_usb_restore("basic_loop_usb_missing")
                 ensure_usb_state_dir()
                 load_usb_cache()
                 load_blacklist()
