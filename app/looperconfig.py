@@ -380,7 +380,10 @@ def usb_status_lines(cfg):
         vids = count_total_videos()
         return [f"USB: {vids} videos detected   {fs or 'mounted'}",
                 f"Folders: {selected_folder_summary(cfg)}"]
-    return ["USB: Not connected", "Insert USB drive"]
+    return ["INSERT USB", "Waiting for USB drive"]
+
+def usb_ready_for_playback():
+    return (is_usb_mounted() or mount_usb_for_menu()) and count_total_videos() > 0
 
 def surf_txt(cfg):
     if not cfg["channel_surfing"]:
@@ -391,8 +394,7 @@ def home_rows(cfg):
     rows = []
     for name in HOME_MODES:
         rows.append((name, ""))
-    rows.append(("  OPTIONS", ""))
-    actions = [("SHUTDOWN","")]
+    actions = [("OPTIONS",""), ("SHUTDOWN","")]
     return rows, actions, 1
 
 def clean_label(label):
@@ -491,8 +493,9 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
     width = max(20, w - left - SAFE_MARGIN_X)
     top = SAFE_MARGIN_Y
     last_row = max(top + 6, h - SAFE_MARGIN_BOTTOM)
-    row_start = top + 3
-    visible_count = max(3, last_row - row_start)
+    row_start = top + 5
+    section_gap = 1 if rows_top and rows_bottom else 0
+    visible_count = max(3, last_row - row_start - section_gap)
 
     if sel_idx < 0:
         sel_idx = 0
@@ -514,7 +517,7 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
 
     put(top, f"PiTV  {VERSION_TEXT}", attr(PAIR_NORMAL, curses.A_BOLD))
     put(top + 1, status[:width], attr(PAIR_DIM))
-    put(top + 2, title[:width], attr(PAIR_ACCENT, curses.A_BOLD))
+    put(top + 3, title[:width], attr(PAIR_ACCENT, curses.A_BOLD))
 
     def format_row(label, value, selected=False):
         marker = ">" if selected else " "
@@ -535,6 +538,9 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
         put(y, "^ more", attr(PAIR_DIM))
         y += 1
     for idx in range(start, end):
+        if rows_bottom and idx == len(rows_top) and y < last_row:
+            put(y, "", attr(PAIR_DIM))
+            y += 1
         label, value = rows[idx]
         selected = idx == sel_idx
         row_attr = attr(PAIR_HILITE, curses.A_BOLD) if selected else attr(PAIR_NORMAL)
@@ -734,6 +740,7 @@ def folder_picker(stdscr, initial_selected):
     selected = set(initial_selected or ["ROOT"])
     options  = list_usb_folders()
     sel_idx  = 0
+    stdscr.timeout(-1)
 
     while True:
         # build rows with checkboxes
@@ -787,6 +794,7 @@ def video_picker(stdscr, initial_selected=None, multi=True):
     else:
         selected = {initial_selected} if initial_selected else set()
     sel_idx = 0
+    stdscr.timeout(-1)
 
     while True:
         rows_top = []
@@ -1042,6 +1050,7 @@ def run_menu(stdscr):
         duration_edit_text = ""
 
     while True:
+        stdscr.timeout(1000)
         if page == "home":
             finalize_duration_edit()
             rows_top, rows_bottom, _ = home_rows(cfg)
@@ -1187,16 +1196,22 @@ def run_menu(stdscr):
             elif page == "mode":
                 hm = current_home_mode(cfg)
                 if clean.startswith("Folders"):
+                    stdscr.timeout(-1)
                     new_sel = folder_picker(stdscr, cfg.get("folders", ["ROOT"]))
                     cfg["folders"] = new_sel if new_sel else ["ROOT"]
                     continue
                 if clean == "Videos":
+                    stdscr.timeout(-1)
                     cfg["selected_videos"] = video_picker(stdscr, cfg.get("selected_videos", []), multi=True)
                     continue
                 if clean == "Video":
+                    stdscr.timeout(-1)
                     cfg["player_file"] = video_picker(stdscr, cfg.get("player_file", ""), multi=False)
                     continue
                 if clean.startswith("START "):
+                    if not usb_ready_for_playback():
+                        popup_wait_key(stdscr, "USB", ["Insert a USB drive with videos first."])
+                        continue
                     if hm == "VIDEO PLAYER" and not cfg.get("player_file"):
                         popup_wait_key(stdscr, "VIDEO PLAYER", ["Choose a video file first."])
                         continue
