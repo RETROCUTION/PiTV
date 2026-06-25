@@ -464,23 +464,8 @@ def build_rows_main(cfg):
 
 def build_rows_more(cfg):
     """Return (option_rows, action_rows, spacer_rows_count_after_options)."""
-    # Show a compact summary of selected folders
-    fol = cfg.get("folders", ["ROOT"])
-    if "ROOT" in fol and len(fol) == 1:
-        fol_summary = "[ROOT]"
-    else:
-        # show up to 2 names then “+N”
-        show = [x for x in fol if x != "ROOT"]
-        show.sort()
-        if "ROOT" in fol: show.insert(0, "ROOT")
-        if len(show) <= 3:
-            fol_summary = "[" + ", ".join(show) + "]"
-        else:
-            fol_summary = "[" + ", ".join(show[:2]) + f", +{len(show)-2}]"  # compact
-
     options = [
         ("Audio Output", audio_txt(cfg["audio_output"])),  # DEFAULT / ALSA
-        ("VIDEO FOLDERS >", fol_summary),                  # NEW
         ("SHOW IP", ""),
         ("RESET TV POSITION", ""),
         ("DELETE CACHE", ""),
@@ -527,6 +512,14 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
         except curses.error:
             pass
 
+    def put_at(y, x, text, row_attr=0):
+        if y < 0 or y >= h or x < 0 or x >= w:
+            return
+        try:
+            stdscr.addstr(y, x, text[:max(0, w - x)], row_attr)
+        except curses.error:
+            pass
+
     put(top, f"PiTV  {VERSION_TEXT}", attr(PAIR_NORMAL, curses.A_BOLD))
     put(top + 1, status[:width], attr(PAIR_DIM))
     put(top + 3, title[:width], attr(PAIR_ACCENT, curses.A_BOLD))
@@ -547,9 +540,6 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
         return marker + body[:available]
 
     y = row_start
-    if start > 0:
-        put(y, "^ more", attr(PAIR_DIM))
-        y += 1
     for idx in range(start, end):
         if rows_bottom and idx == len(rows_top) and y < last_row:
             put(y, "", attr(PAIR_DIM))
@@ -563,8 +553,11 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
             row_attr = attr(PAIR_HILITE, curses.A_BOLD) if selected else attr(PAIR_NORMAL)
         put(y, format_row(label, value, selected), row_attr)
         y += 1
-    if end < len(rows) and y < last_row:
-        put(y, "v more", attr(PAIR_DIM))
+    indicator_x = min(w - 1, left + width - 1)
+    if start > 0:
+        put_at(row_start, indicator_x, "^", attr(PAIR_DIM, curses.A_BOLD))
+    if end < len(rows):
+        put_at(min(last_row - 1, h - 1), indicator_x, "v", attr(PAIR_DIM, curses.A_BOLD))
 
     stdscr.refresh()
 
@@ -1158,7 +1151,7 @@ def run_menu(stdscr):
             rows_top, rows_bottom, _ = build_rows_more(cfg)
             draw_box(
                 stdscr,
-                "OPTIONS / CONFIG",
+                "OPTIONS",
                 rows_top,
                 rows_bottom,
                 sel,
@@ -1317,10 +1310,6 @@ def run_menu(stdscr):
                     continue
 
             else:  # page == "more"
-                if clean.startswith("VIDEO FOLDERS"):
-                    new_sel = folder_picker(stdscr, cfg.get("folders", ["ROOT"]))
-                    cfg["folders"] = new_sel if new_sel else ["ROOT"]
-                    continue
                 if clean == "SHOW IP":
                     ips = get_local_ip_strings()
                     lines = [f"IP: {ip}" for ip in ips]
