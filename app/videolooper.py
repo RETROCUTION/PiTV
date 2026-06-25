@@ -719,24 +719,24 @@ def get_duration(path):
         return dur_cache.get(key_for(path), 0.0)
 
 # ---------- Keyboard + OMX ----------
-def make_flags_for_mode():
+def make_flags_for_mode(audio=True):
     flags = OMX_FLAGS_BASE[:]
     mode = active_mode()
     if "CRT" in mode:
         flags += ["--aspect-mode", "fill"]
     # NEW: audio output selection
-    if AUDIO_OUTPUT == "alsa":
+    if audio and AUDIO_OUTPUT == "alsa":
         flags += ["-o", "alsa"]
     return flags
 
-def play_omx(file_path, loop=False, pos=None, layer=None, kbd="inherit"):
+def play_omx(file_path, loop=False, pos=None, layer=None, kbd="inherit", audio=True):
     """
     kbd:
       - "inherit": omxplayer reads keyboard directly from TTY
       - "swallow": no keyboard (stdin=DEVNULL)
       - "pipe":    we feed keys via proc.stdin
     """
-    cmd = make_flags_for_mode()
+    cmd = make_flags_for_mode(audio=audio)
     if loop: cmd.append("--loop")
     if pos is not None and pos >= 0:
         cmd += ["--pos", str(int(pos))]
@@ -1196,7 +1196,7 @@ def random_mode_loop():
             if insert_proc:
                 stop_proc(insert_proc); insert_proc = None
             if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO) and (not static_proc or static_proc.poll() is not None):
-                static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow")
+                static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow", audio=False)
                 log_event("static_background_started", reason="random_mode")
 
             playlist = filtered_video_files(get_video_files())
@@ -1270,7 +1270,10 @@ def random_mode_loop():
                     break
                 time.sleep(0.02)
 
-            stop_ms = stop_proc(proc, timeout=0.2)
+            # Random Mode intentionally starts/stops OMX often. Give OMX time to
+            # release decoder/audio resources so long soaks do not accumulate
+            # GPU/ALSA weirdness from repeated SIGKILL exits.
+            stop_ms = stop_proc(proc, timeout=1.25)
             log_event(
                 "random_clip_stop",
                 file=os.path.basename(path),
@@ -1415,7 +1418,7 @@ def live_tv_loop():
             return
         if static_proc and static_proc.poll() is None:
             return
-        static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow")
+        static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow", audio=False)
         static_start_mono = time.monotonic()
         static_duration = 0.0
         log_event("static_background_started", reason=reason)
@@ -1961,7 +1964,7 @@ def play_fallback_until_usb():
 
 def play_static_bg_if_needed():
     if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO):
-        return safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow")
+        return safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow", audio=False)
     return None
 
 # ---------- Main ----------

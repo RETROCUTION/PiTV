@@ -63,15 +63,15 @@ fi
 
 sudo tee /etc/asound.conf >/dev/null <<'ASOUND'
 pcm.!default {
-type hw
-card 0
+    type plug
+    slave.pcm "hw:0,0"
 }
 
 ctl.!default {
-type hw
-card 0
+    type hw
+    card 0
 }
 ASOUND
 
-echo "Wrote /etc/asound.conf for PCM5102 / HiFiDAC as ALSA card 0."
+echo "Wrote /etc/asound.conf for PCM5102 / HiFiDAC through ALSA plughw conversion."
 echo "This audio change takes effect after reboot."

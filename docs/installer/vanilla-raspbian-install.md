@@ -125,13 +125,13 @@ It also writes `/etc/asound.conf`:
 
 ```text
 pcm.!default {
-type hw
-card 0
+    type plug
+    slave.pcm "hw:0,0"
 }
 
 ctl.!default {
-type hw
-card 0
+    type hw
+    card 0
 }
 ```
 
