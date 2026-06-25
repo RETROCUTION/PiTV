@@ -10,6 +10,8 @@ LIVE_TV_HD             = 0   # Live TV global-time looper (HD)
 LIVE_TV_CRT            = 1   # Live TV global-time looper with --aspect-mode fill
 VIDEO_PLAYER           = 0   # One selected file with full OMXPlayer keyboard controls
 VIDEO_PLAYER_CRT       = 0   # Same, but --aspect-mode fill
+RANDOM_MODE            = 0   # Short random clips from selected folders
+RANDOM_MODE_CRT        = 0   # Same, but --aspect-mode fill
 
 STATIC_BACKGROUND = 1        # 0=off, 1=on
 SHUFFLE_VIDEOS   = 1
@@ -21,6 +23,9 @@ WRAP_SURF_COALESCE_SECONDS = 1.0
 PLAYLIST_RESCAN_SECONDS = 30.0
 USB_RECOVERY_FIRST_ATTEMPT_SECONDS = 30.0
 USB_RECOVERY_RETRY_SECONDS = 300.0
+RANDOM_CLIP_MIN_SECONDS = 8
+RANDOM_CLIP_MAX_SECONDS = 28
+RANDOM_EDGE_GUARD_SECONDS = 120.0
 
 # NEW: audio output mode: "default" (no -o) or "alsa" (-o alsa)
 AUDIO_OUTPUT = "default"
@@ -57,7 +62,7 @@ OMX_FLAGS_BASE = ["omxplayer", "-a", "--limited-osd", "--font-size", "110"]  # -
 
 # --------- apply config file overrides (if present) ----------
 def load_apply_config():
-    global BASIC_VIDEO_LOOPER, BASIC_VIDEO_LOOPER_CRT, LIVE_TV_HD, LIVE_TV_CRT, VIDEO_PLAYER, VIDEO_PLAYER_CRT
+    global BASIC_VIDEO_LOOPER, BASIC_VIDEO_LOOPER_CRT, LIVE_TV_HD, LIVE_TV_CRT, VIDEO_PLAYER, VIDEO_PLAYER_CRT, RANDOM_MODE, RANDOM_MODE_CRT
     global STATIC_BACKGROUND, SHUFFLE_VIDEOS, CHANNEL_SURFING, CHANNEL_MIN_SECONDS, CHANNEL_MAX_SECONDS
     global AUDIO_OUTPUT, SELECTED_FOLDERS, SELECTED_VIDEO_FILES, PLAYER_FILE
 
@@ -68,13 +73,15 @@ def load_apply_config():
         cfg = {}
 
     mode = cfg.get("mode")
-    if mode in ("BASIC","BASIC_CRT","LIVE_TV","LIVE_TV_CRT","VIDEO_PLAYER","VIDEO_PLAYER_CRT"):
+    if mode in ("BASIC","BASIC_CRT","LIVE_TV","LIVE_TV_CRT","VIDEO_PLAYER","VIDEO_PLAYER_CRT","RANDOM","RANDOM_CRT"):
         BASIC_VIDEO_LOOPER     = 1 if mode=="BASIC" else 0
         BASIC_VIDEO_LOOPER_CRT = 1 if mode=="BASIC_CRT" else 0
         LIVE_TV_HD             = 1 if mode=="LIVE_TV" else 0
         LIVE_TV_CRT            = 1 if mode=="LIVE_TV_CRT" else 0
         VIDEO_PLAYER           = 1 if mode=="VIDEO_PLAYER" else 0
         VIDEO_PLAYER_CRT       = 1 if mode=="VIDEO_PLAYER_CRT" else 0
+        RANDOM_MODE            = 1 if mode=="RANDOM" else 0
+        RANDOM_MODE_CRT        = 1 if mode=="RANDOM_CRT" else 0
 
     STATIC_BACKGROUND = 1 if bool(cfg.get("static_background", STATIC_BACKGROUND)) else 0
     SHUFFLE_VIDEOS    = 1 if bool(cfg.get("shuffle_videos", SHUFFLE_VIDEOS)) else 0
@@ -110,6 +117,8 @@ def active_mode():
         "LIVE TV (CRT)": LIVE_TV_CRT,
         "VIDEO PLAYER": VIDEO_PLAYER,
         "VIDEO PLAYER (CRT)": VIDEO_PLAYER_CRT,
+        "RANDOM MODE": RANDOM_MODE,
+        "RANDOM MODE (CRT)": RANDOM_MODE_CRT,
     }
     if sum(sel.values()) != 1:
         return "BASIC"
@@ -1094,6 +1103,128 @@ def play_video_player():
             return
         time.sleep(0.2)
 
+def random_clip_window(path):
+    """Return (start_pos, clip_seconds, duration) for Random Mode."""
+    dur = float(get_duration(path) or 0.0)
+    if dur <= 0:
+        d = ffprobe_duration(path)
+        with cache_lock:
+            dur_cache[key_for(path)] = d
+        save_all_caches()
+        dur = float(d or 0.0)
+
+    if dur <= 1:
+        return 0, RANDOM_CLIP_MIN_SECONDS, dur
+
+    clip_max = min(float(RANDOM_CLIP_MAX_SECONDS), max(2.0, dur - 1.0))
+    clip_min = min(float(RANDOM_CLIP_MIN_SECONDS), clip_max)
+    clip_seconds = random.randint(int(max(1, clip_min)), int(max(1, clip_max)))
+
+    guard = float(RANDOM_EDGE_GUARD_SECONDS)
+    if dur <= (guard * 2.0 + clip_seconds):
+        # Shorter files still get some protection, but not so much that nothing can play.
+        guard = max(0.0, min(30.0, dur * 0.15))
+    if dur <= (guard * 2.0 + clip_seconds):
+        guard = 0.0
+
+    latest_start = max(0.0, dur - guard - clip_seconds)
+    earliest_start = min(max(0.0, guard), latest_start)
+    if latest_start <= earliest_start:
+        start_pos = int(max(0.0, earliest_start))
+    else:
+        start_pos = random.randint(int(earliest_start), int(latest_start))
+    return start_pos, int(clip_seconds), dur
+
+def random_mode_loop():
+    """Experimental mode: jump through short random clips until ESC/Q."""
+    global EXIT_REQUESTED
+    EXIT_REQUESTED = False
+    last_path = None
+
+    setup_tty()
+    try:
+        insert_proc = None
+        if not is_usb_connected():
+            insert_proc = safe_play(FALLBACK_VIDEO, loop=True, pos=None, layer=None, kbd="swallow")
+            println("Please insert USB...")
+
+        while not EXIT_REQUESTED:
+            while not is_usb_connected():
+                wait_for_usb_restore("random_mode_usb_missing")
+            ensure_usb_state_dir()
+            load_usb_cache()
+            load_blacklist()
+            if insert_proc:
+                stop_proc(insert_proc); insert_proc = None
+
+            playlist = filtered_video_files(get_video_files())
+            if not playlist:
+                println("[RANDOM] No videos found.")
+                time.sleep(2)
+                continue
+
+            preload_durations_ordered(playlist, prime_count=1)
+            choices = [p for p in playlist if p != last_path] if len(playlist) > 1 else playlist
+            path = random.choice(choices)
+            pos, clip_seconds, dur = random_clip_window(path)
+            last_path = path
+
+            println(f"[RANDOM] {os.path.basename(path)} @ {hms(pos)} for {clip_seconds}s")
+            proc = play_omx(path, loop=False, pos=pos, layer=None, kbd="swallow")
+            log_event(
+                "random_clip_start",
+                file=os.path.basename(path),
+                ext=os.path.splitext(path)[1].lower(),
+                size_mb=file_size_mb(path),
+                pos=pos,
+                clip_seconds=clip_seconds,
+                duration=round(float(dur), 3) if dur else 0,
+                launch_ms=getattr(proc, "pitv_launch_ms", None),
+            )
+            log_diag(
+                "random_clip_start",
+                file=os.path.basename(path),
+                path=path,
+                ext=os.path.splitext(path)[1].lower(),
+                size_mb=file_size_mb(path),
+                pos=pos,
+                clip_seconds=clip_seconds,
+                duration=round(float(dur), 3) if dur else 0,
+                launch_ms=getattr(proc, "pitv_launch_ms", None),
+            )
+            probe_startup(proc, path, "random_clip", pos)
+
+            clip_started = time.monotonic()
+            exit_reason = "clip_done"
+            while proc.poll() is None:
+                k = read_key(0.05)
+                if k == "ESC" or k in ("q", "Q"):
+                    EXIT_REQUESTED = True
+                    exit_reason = "user_exit"
+                    break
+                if not is_usb_connected() and path.startswith(MOUNT_PATH):
+                    exit_reason = "usb_removed"
+                    break
+                if time.monotonic() - clip_started >= clip_seconds:
+                    break
+                time.sleep(0.02)
+
+            stop_ms = stop_proc(proc, timeout=0.2)
+            log_event(
+                "random_clip_stop",
+                file=os.path.basename(path),
+                reason=exit_reason,
+                played_seconds=round(time.monotonic() - clip_started, 2),
+                stop_ms=stop_ms,
+                prior_exit=proc.poll(),
+            )
+            if exit_reason == "usb_removed":
+                println("Please insert USB...")
+                wait_for_usb_restore("random_mode_usb_removed")
+
+    finally:
+        restore_tty()
+
 # ---------- LIVE TV (global time with per-title clocks) ----------
 def build_playlist():
     vids = filtered_video_files(get_video_files())
@@ -1782,6 +1913,8 @@ def main():
         if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO): extras.append("Static BG")
     elif mode.startswith("BASIC"):
         if SHUFFLE_VIDEOS: extras.append("Shuffle")
+    elif mode.startswith("RANDOM MODE"):
+        extras.append("Experimental")
     extras_str = f" [{', '.join(extras)}]" if extras else ""
     println(f"=== USB Video Looper ({mode}{extras_str}) ===")
 
@@ -1798,6 +1931,8 @@ def main():
         live_tv_loop()
     elif mode.startswith("VIDEO PLAYER"):
         play_video_player()
+    elif mode.startswith("RANDOM MODE"):
+        random_mode_loop()
     else:
         # Looper mode: clean repeat playback, no TV static underlay.
         setup_tty()

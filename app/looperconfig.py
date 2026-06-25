@@ -7,7 +7,7 @@ MOUNT_PATH  = "/mnt/usb"  # used to list folders for the picker
 
 # ========= Defaults (used for first boot and after "Delete Config") =========
 DEFAULTS = {
-    "mode": "BASIC",             # BASIC, BASIC_CRT, LIVE_TV, LIVE_TV_CRT, VIDEO_PLAYER, VIDEO_PLAYER_CRT
+    "mode": "BASIC",             # BASIC, BASIC_CRT, LIVE_TV, LIVE_TV_CRT, VIDEO_PLAYER, VIDEO_PLAYER_CRT, RANDOM, RANDOM_CRT
     "static_background": False,  # OFF by default (clean baseline)
     "shuffle_videos": False,     # OFF by default
     "channel_surfing": False,    # OFF by default
@@ -19,8 +19,8 @@ DEFAULTS = {
     "player_file": "",           # Video Player: single video, relative to USB root
 }
 
-MODES = ["BASIC", "BASIC_CRT", "LIVE_TV", "LIVE_TV_CRT", "VIDEO_PLAYER", "VIDEO_PLAYER_CRT"]
-HOME_MODES = ["TV", "LOOPER", "VIDEO PLAYER"]
+MODES = ["BASIC", "BASIC_CRT", "LIVE_TV", "LIVE_TV_CRT", "VIDEO_PLAYER", "VIDEO_PLAYER_CRT", "RANDOM", "RANDOM_CRT"]
+HOME_MODES = ["TV", "LOOPER", "VIDEO PLAYER", "RANDOM MODE"]
 AUDIO_CHOICES = ["DEFAULT", "ALSA"]
 VIDEO_FORMATS = (".mp4", ".mkv", ".mov", ".avi", ".m4v")
 USB_STATE_DIR_NAME = ".pitv"
@@ -35,6 +35,8 @@ MODE_LABELS = {
     "LIVE_TV_CRT": "TV MODE - CRT",
     "VIDEO_PLAYER": "VIDEO PLAYER - HD",
     "VIDEO_PLAYER_CRT": "VIDEO PLAYER - CRT",
+    "RANDOM": "RANDOM MODE - HD",
+    "RANDOM_CRT": "RANDOM MODE - CRT",
 }
 
 MODE_HELP = {
@@ -44,18 +46,22 @@ MODE_HELP = {
     "LIVE_TV_CRT": "CRT channel-surf TV with videos keeping time.",
     "VIDEO_PLAYER": "Play one selected file with OMXPlayer controls.",
     "VIDEO_PLAYER_CRT": "Play one selected file with CRT-style fill.",
+    "RANDOM": "Play short random clips from selected folders.",
+    "RANDOM_CRT": "Play short random clips with CRT-style fill.",
 }
 
 MODE_PRESETS = {
     "TV": "LIVE_TV_CRT",
     "LOOPER": "BASIC_CRT",
     "VIDEO PLAYER": "VIDEO_PLAYER_CRT",
+    "RANDOM MODE": "RANDOM_CRT",
 }
 
 MODE_DESCRIPTIONS = {
     "TV": "Live timeline video switching.",
     "LOOPER": "Repeat selected videos all the way through.",
     "VIDEO PLAYER": "Play one file with OMXPlayer controls.",
+    "RANDOM MODE": "Experimental short random clips.",
 }
 
 SURF_MIN_LIMIT = 5
@@ -205,6 +211,8 @@ def current_home_mode(cfg):
         return "TV"
     if mode in ("VIDEO_PLAYER", "VIDEO_PLAYER_CRT"):
         return "VIDEO PLAYER"
+    if mode in ("RANDOM", "RANDOM_CRT"):
+        return "RANDOM MODE"
     return "LOOPER"
 
 def set_home_mode(cfg, home_mode):
@@ -224,6 +232,8 @@ def set_display_profile(cfg, profile):
         cfg["mode"] = "BASIC_CRT" if wants_crt else "BASIC"
     elif mode.startswith("VIDEO_PLAYER"):
         cfg["mode"] = "VIDEO_PLAYER_CRT" if wants_crt else "VIDEO_PLAYER"
+    elif mode.startswith("RANDOM"):
+        cfg["mode"] = "RANDOM_CRT" if wants_crt else "RANDOM"
 
 def toggle_display_profile(cfg):
     set_display_profile(cfg, "HD FIT" if display_profile(cfg) == "CRT FILL" else "CRT FILL")
@@ -438,10 +448,16 @@ def mode_config_rows(cfg, edit_field=None, edit_text=""):
             ("Shuffle", bool_txt(cfg["shuffle_videos"]).strip()),
         ]
     else:
-        rows = [
-            ("Video >", f"{player_file_summary(cfg)}"),
-            ("Display", f"{display_profile(cfg)}"),
-        ]
+        if home_mode == "RANDOM MODE":
+            rows = [
+                ("Folder >", f"{selected_folder_summary(cfg)}"),
+                ("Display", f"{display_profile(cfg)}"),
+            ]
+        else:
+            rows = [
+                ("Video >", f"{player_file_summary(cfg)}"),
+                ("Display", f"{display_profile(cfg)}"),
+            ]
     actions = [(f"START {home_mode}",""), ("BACK","")]
     return rows, actions, 1
 
