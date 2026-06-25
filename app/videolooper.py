@@ -950,7 +950,7 @@ def read_key(timeout):
     if final == "D": return "LEFT"
     return None
 
-# ---------- BASIC modes (with Python handling ESC/N) ----------
+# ---------- Looper mode (Python handles only ESC/Q) ----------
 EXIT_REQUESTED = False
 LAST_BASIC_PLAYED = None  # remember last file in BASIC mode to prevent back-to-back repeats
 
@@ -982,11 +982,11 @@ def _forward_char(proc, ch):
         pass
 
 def play_one_basic(path):
-    """Play single file in BASIC with Python handling keys. ESC exits to menu. N = next (if surfing OFF)."""
+    """Play one Looper file all the way through. ESC/Q exits to the menu."""
     global EXIT_REQUESTED
     println(f"[PLAYING] {os.path.basename(path)}")
     launch_t0 = time.monotonic()
-    proc = play_omx(path, loop=False, pos=None, layer=foreground_layer(), kbd="pipe")
+    proc = play_omx(path, loop=False, pos=None, layer=None, kbd="swallow")
     launch_ms = round((time.monotonic() - launch_t0) * 1000, 1)
     log_event(
         "play_start",
@@ -997,8 +997,8 @@ def play_one_basic(path):
         reason="basic_loop",
         launch_ms=launch_ms,
         shuffle=bool(SHUFFLE_VIDEOS),
-        static=bool(STATIC_BACKGROUND),
-        channel_surfing=bool(CHANNEL_SURFING),
+        static=False,
+        channel_surfing=False,
     )
     log_diag(
         "play_start",
@@ -1010,13 +1010,10 @@ def play_one_basic(path):
         reason="basic_loop",
         launch_ms=launch_ms,
         shuffle=bool(SHUFFLE_VIDEOS),
-        static=bool(STATIC_BACKGROUND),
-        channel_surfing=bool(CHANNEL_SURFING),
+        static=False,
+        channel_surfing=False,
     )
     probe_startup(proc, path, "basic_loop", 0)
-    deadline = channel_surf_deadline()
-
-    forward_chars = set("  pPoOzZxX1234567890-+=")
 
     while proc.poll() is None:
         k = read_key(0.05)
@@ -1025,20 +1022,7 @@ def play_one_basic(path):
                 EXIT_REQUESTED = True
                 stop_proc(proc); return None
 
-            if CHANNEL_SURFING:
-                pass
-            else:
-                if k in ("n","N"):
-                    stop_proc(proc); return None
-                elif k in ("LEFT","RIGHT","UP","DOWN"):
-                    _forward_arrow(proc, k)
-                elif len(k) == 1 and k in forward_chars:
-                    _forward_char(proc, k)
-
         if not is_usb_connected() and path.startswith(MOUNT_PATH):
-            stop_proc(proc); return None
-
-        if deadline and (time.monotonic() >= deadline):
             stop_proc(proc); return None
 
         time.sleep(0.03)
@@ -1792,9 +1776,12 @@ def main():
 
     mode = active_mode()
     extras = []
-    if SHUFFLE_VIDEOS: extras.append("Shuffle")
-    if CHANNEL_SURFING: extras.append("Channel Surfing")
-    if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO): extras.append("Static BG")
+    if mode.startswith("LIVE TV"):
+        if SHUFFLE_VIDEOS: extras.append("Shuffle")
+        if CHANNEL_SURFING: extras.append("Channel Surfing")
+        if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO): extras.append("Static BG")
+    elif mode.startswith("BASIC"):
+        if SHUFFLE_VIDEOS: extras.append("Shuffle")
     extras_str = f" [{', '.join(extras)}]" if extras else ""
     println(f"=== USB Video Looper ({mode}{extras_str}) ===")
 
