@@ -750,6 +750,8 @@ def stop_proc(proc, fast=False, timeout=0.35):
     stop_t0 = time.monotonic()
     sig = signal.SIGKILL if fast else signal.SIGINT
     try:
+        if proc.poll() is None:
+            proc.pitv_stop_requested = True
         os.killpg(proc.pid, sig)
         if fast:
             try:
@@ -825,6 +827,15 @@ def probe_startup(proc, path, reason, launch_pos):
             alive=(exit_code is None),
             exit_code=exit_code,
         )
+        if exit_code not in (None, 0) and getattr(proc, "pitv_stop_requested", False):
+            log_event(
+                "startup_probe_ignored",
+                file=os.path.basename(path),
+                reason=reason,
+                exit_code=exit_code,
+                detail="intentional_stop",
+            )
+            return
         if exit_code not in (None, 0):
             note_startup_failure(path, "early_exit", exit_code)
     try:
