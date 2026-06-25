@@ -756,6 +756,20 @@ def list_usb_videos(folders=None):
             add_from_dir(p, folder)
     return items
 
+def jump_to_letter(options, current_idx, ch, label_func=lambda item: str(item)):
+    if not (ord("a") <= ch <= ord("z") or ord("A") <= ch <= ord("Z")):
+        return current_idx
+    target = chr(ch).lower()
+    if not options:
+        return current_idx
+    start = min(max(current_idx + 1, 0), len(options))
+    scan_order = list(range(start, len(options))) + list(range(0, start))
+    for idx in scan_order:
+        label = label_func(options[idx]).strip().lower()
+        if label.startswith(target):
+            return idx
+    return current_idx
+
 def folder_picker(stdscr, initial_selected):
     """
     Multi-select UI. Returns a list of names (e.g., ['ROOT','channel_2',...]).
@@ -778,18 +792,16 @@ def folder_picker(stdscr, initial_selected):
 
         ch = stdscr.getch()
         total = len(rows_top) + len(rows_bottom)
-        if ch in (curses.KEY_UP, ord('k')):
+        if ch == curses.KEY_UP:
             sel_idx = max(0, sel_idx - 1)
-        elif ch in (curses.KEY_DOWN, ord('j')):
+        elif ch == curses.KEY_DOWN:
             sel_idx = min(total - 1, sel_idx + 1)
         elif ch == curses.KEY_LEFT:
             sel_idx = 0
         elif ch == curses.KEY_RIGHT:
             sel_idx = total - 1
-        elif ch in (ord('a'), ord('A')):  # select all
-            selected = set(options)
-        elif ch in (ord('n'), ord('N')):  # select none (but keep ROOT disabled until user picks something else)
-            selected = set()
+        elif ord("a") <= ch <= ord("z") or ord("A") <= ch <= ord("Z"):
+            sel_idx = jump_to_letter(options, min(sel_idx, len(options) - 1), ch)
         elif ch in (curses.KEY_ENTER, 10, 13, ord(' ')):
             if sel_idx < len(rows_top):
                 # toggle this option
@@ -830,10 +842,8 @@ def video_picker(stdscr, initial_selected=None, multi=True, folders=None):
         for rel in options:
             mark = "x" if rel in selected else " "
             name = os.path.basename(rel)
-            parent = os.path.dirname(rel)
             label = f"[{mark}] {name}" if multi else name
-            value = parent if parent else "ROOT"
-            rows_top.append((label, value))
+            rows_top.append((label, ""))
 
         rows_bottom = [("DONE",""), ("CLEAR","")] if multi else [("CLEAR","")]
         title = "SELECT VIDEOS" if multi else "SELECT VIDEO"
@@ -841,16 +851,21 @@ def video_picker(stdscr, initial_selected=None, multi=True, folders=None):
 
         ch = stdscr.getch()
         total = len(rows_top) + len(rows_bottom)
-        if ch in (curses.KEY_UP, ord('k')):
+        if ch == curses.KEY_UP:
             sel_idx = max(0, sel_idx - 1)
-        elif ch in (curses.KEY_DOWN, ord('j')):
+        elif ch == curses.KEY_DOWN:
             sel_idx = min(total - 1, sel_idx + 1)
         elif ch == curses.KEY_LEFT:
             sel_idx = 0
         elif ch == curses.KEY_RIGHT:
             sel_idx = total - 1
-        elif multi and ch in (ord('a'), ord('A')):
-            selected = set(options)
+        elif ord("a") <= ch <= ord("z") or ord("A") <= ch <= ord("Z"):
+            sel_idx = jump_to_letter(
+                options,
+                min(sel_idx, len(options) - 1),
+                ch,
+                lambda rel: os.path.basename(rel),
+            )
         elif ch in (curses.KEY_ENTER, 10, 13, ord(' ')):
             if sel_idx < len(rows_top):
                 rel = options[sel_idx]
@@ -886,16 +901,15 @@ def playback_order_editor(stdscr, selected_videos):
     while True:
         rows_top = []
         for i, rel in enumerate(order):
-            parent = os.path.dirname(rel)
-            rows_top.append((f"{i + 1}. {os.path.basename(rel)}", parent if parent else "ROOT"))
+            rows_top.append((f"{i + 1}. {os.path.basename(rel)}", ""))
         rows_bottom = [("DONE","")]
         draw_box(stdscr, "PLAYBACK ORDER", rows_top, rows_bottom, sel_idx)
 
         ch = stdscr.getch()
         total = len(rows_top) + len(rows_bottom)
-        if ch in (curses.KEY_UP, ord("k")):
+        if ch == curses.KEY_UP:
             sel_idx = max(0, sel_idx - 1)
-        elif ch in (curses.KEY_DOWN, ord("j")):
+        elif ch == curses.KEY_DOWN:
             sel_idx = min(total - 1, sel_idx + 1)
         elif ch == curses.KEY_LEFT and sel_idx < len(order) and sel_idx > 0:
             item = order.pop(sel_idx)
@@ -905,6 +919,13 @@ def playback_order_editor(stdscr, selected_videos):
             item = order.pop(sel_idx)
             order.append(item)
             sel_idx = len(order) - 1
+        elif ord("a") <= ch <= ord("z") or ord("A") <= ch <= ord("Z"):
+            sel_idx = jump_to_letter(
+                order,
+                min(sel_idx, len(order) - 1),
+                ch,
+                lambda rel: os.path.basename(rel),
+            )
         elif ch in (curses.KEY_ENTER, 10, 13, ord(" ")):
             if sel_idx >= len(rows_top):
                 return order
@@ -1165,10 +1186,10 @@ def run_menu(stdscr):
             continue
 
         # Navigation within selectable rows
-        if ch in (curses.KEY_UP, ord('k')):
+        if ch == curses.KEY_UP:
             finalize_duration_edit()
             sel = max(0, sel - 1)
-        elif ch in (curses.KEY_DOWN, ord('j')):
+        elif ch == curses.KEY_DOWN:
             finalize_duration_edit()
             sel = min(len(selectable) - 1, sel + 1)
 
