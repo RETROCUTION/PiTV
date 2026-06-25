@@ -26,6 +26,9 @@ USB_RECOVERY_RETRY_SECONDS = 300.0
 RANDOM_CLIP_MIN_SECONDS = 8
 RANDOM_CLIP_MAX_SECONDS = 28
 RANDOM_EDGE_GUARD_SECONDS = 120.0
+RANDOM_CLIP_LENGTH = "SHORT"
+RANDOM_GUARD = "NORMAL"
+RANDOM_REPEAT_STYLE = "FULLY RANDOM"
 
 # NEW: audio output mode: "default" (no -o) or "alsa" (-o alsa)
 AUDIO_OUTPUT = "default"
@@ -65,6 +68,7 @@ def load_apply_config():
     global BASIC_VIDEO_LOOPER, BASIC_VIDEO_LOOPER_CRT, LIVE_TV_HD, LIVE_TV_CRT, VIDEO_PLAYER, VIDEO_PLAYER_CRT, RANDOM_MODE, RANDOM_MODE_CRT
     global STATIC_BACKGROUND, SHUFFLE_VIDEOS, CHANNEL_SURFING, CHANNEL_MIN_SECONDS, CHANNEL_MAX_SECONDS
     global AUDIO_OUTPUT, SELECTED_FOLDERS, SELECTED_VIDEO_FILES, PLAYER_FILE
+    global RANDOM_CLIP_LENGTH, RANDOM_GUARD, RANDOM_REPEAT_STYLE
 
     try:
         with open(CONFIG_PATH, "r") as f:
@@ -108,6 +112,13 @@ def load_apply_config():
     vids = cfg.get("selected_videos", SELECTED_VIDEO_FILES)
     SELECTED_VIDEO_FILES = [str(x) for x in vids] if isinstance(vids, list) else []
     PLAYER_FILE = str(cfg.get("player_file", PLAYER_FILE) or "")
+
+    clip = str(cfg.get("random_clip_length", RANDOM_CLIP_LENGTH) or "").upper()
+    RANDOM_CLIP_LENGTH = clip if clip in ("SHORT", "MEDIUM", "LONG") else "SHORT"
+    guard = str(cfg.get("random_guard", RANDOM_GUARD) or "").upper()
+    RANDOM_GUARD = guard if guard in ("OFF", "NORMAL", "STRICT") else "NORMAL"
+    repeat = str(cfg.get("random_repeat", RANDOM_REPEAT_STYLE) or "").upper()
+    RANDOM_REPEAT_STYLE = repeat if repeat in ("FULLY RANDOM", "CYCLE MOVIES FIRST") else "FULLY RANDOM"
 
 def active_mode():
     sel = {
@@ -400,7 +411,7 @@ def get_video_files():
             player_path = resolve_usb_video(PLAYER_FILE)
             return [player_path] if player_path else []
 
-        if mode.startswith("BASIC") and SELECTED_VIDEO_FILES:
+        if (mode.startswith("BASIC") or mode.startswith("RANDOM MODE")) and SELECTED_VIDEO_FILES:
             selected = []
             seen_selected = set()
             for rel in SELECTED_VIDEO_FILES:
@@ -1103,6 +1114,20 @@ def play_video_player():
             return
         time.sleep(0.2)
 
+def random_clip_bounds():
+    if RANDOM_CLIP_LENGTH == "LONG":
+        return 45, 120
+    if RANDOM_CLIP_LENGTH == "MEDIUM":
+        return 20, 60
+    return RANDOM_CLIP_MIN_SECONDS, RANDOM_CLIP_MAX_SECONDS
+
+def random_guard_seconds():
+    if RANDOM_GUARD == "OFF":
+        return 0.0
+    if RANDOM_GUARD == "STRICT":
+        return 300.0
+    return RANDOM_EDGE_GUARD_SECONDS
+
 def random_clip_window(path):
     """Return (start_pos, clip_seconds, duration) for Random Mode."""
     dur = float(get_duration(path) or 0.0)
@@ -1116,14 +1141,15 @@ def random_clip_window(path):
     if dur <= 1:
         return 0, RANDOM_CLIP_MIN_SECONDS, dur
 
-    clip_max = min(float(RANDOM_CLIP_MAX_SECONDS), max(2.0, dur - 1.0))
-    clip_min = min(float(RANDOM_CLIP_MIN_SECONDS), clip_max)
+    clip_min_setting, clip_max_setting = random_clip_bounds()
+    clip_max = min(float(clip_max_setting), max(2.0, dur - 1.0))
+    clip_min = min(float(clip_min_setting), clip_max)
     clip_seconds = random.randint(int(max(1, clip_min)), int(max(1, clip_max)))
 
-    guard = float(RANDOM_EDGE_GUARD_SECONDS)
+    guard = float(random_guard_seconds())
     if dur <= (guard * 2.0 + clip_seconds):
         # Shorter files still get some protection, but not so much that nothing can play.
-        guard = max(0.0, min(30.0, dur * 0.15))
+        guard = 0.0 if RANDOM_GUARD == "OFF" else max(0.0, min(30.0, dur * 0.15))
     if dur <= (guard * 2.0 + clip_seconds):
         guard = 0.0
 
@@ -1135,15 +1161,28 @@ def random_clip_window(path):
         start_pos = random.randint(int(earliest_start), int(latest_start))
     return start_pos, int(clip_seconds), dur
 
+def build_random_cycle(playlist, last_path=None):
+    bag = playlist[:]
+    random.shuffle(bag)
+    if len(bag) > 1 and last_path and bag[0] == last_path:
+        for i, candidate in enumerate(bag):
+            if candidate != last_path:
+                bag[0], bag[i] = bag[i], bag[0]
+                break
+    return bag
+
 def random_mode_loop():
     """Experimental mode: jump through short random clips until ESC/Q."""
     global EXIT_REQUESTED
     EXIT_REQUESTED = False
     last_path = None
+    cycle_bag = []
+    cycle_signature = None
 
     setup_tty()
     try:
         insert_proc = None
+        static_proc = None
         if not is_usb_connected():
             insert_proc = safe_play(FALLBACK_VIDEO, loop=True, pos=None, layer=None, kbd="swallow")
             println("Please insert USB...")
@@ -1156,6 +1195,9 @@ def random_mode_loop():
             load_blacklist()
             if insert_proc:
                 stop_proc(insert_proc); insert_proc = None
+            if STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO) and (not static_proc or static_proc.poll() is not None):
+                static_proc = safe_play(STATIC_VIDEO, loop=True, pos=None, layer=0, kbd="swallow")
+                log_event("static_background_started", reason="random_mode")
 
             playlist = filtered_video_files(get_video_files())
             if not playlist:
@@ -1164,13 +1206,24 @@ def random_mode_loop():
                 continue
 
             preload_durations_ordered(playlist, prime_count=1)
-            choices = [p for p in playlist if p != last_path] if len(playlist) > 1 else playlist
-            path = random.choice(choices)
+            if RANDOM_REPEAT_STYLE == "CYCLE MOVIES FIRST":
+                signature = tuple(playlist)
+                if signature != cycle_signature:
+                    cycle_bag = build_random_cycle(playlist, last_path)
+                    cycle_signature = signature
+                    log_playlist_order("random_cycle_started", cycle_bag, 0, cycle_bag[0] if cycle_bag else None)
+                if not cycle_bag:
+                    cycle_bag = build_random_cycle(playlist, last_path)
+                    log_playlist_order("random_cycle_reset", cycle_bag, 0, cycle_bag[0] if cycle_bag else None)
+                path = cycle_bag.pop(0)
+            else:
+                choices = [p for p in playlist if p != last_path] if len(playlist) > 1 else playlist
+                path = random.choice(choices)
             pos, clip_seconds, dur = random_clip_window(path)
             last_path = path
 
             println(f"[RANDOM] {os.path.basename(path)} @ {hms(pos)} for {clip_seconds}s")
-            proc = play_omx(path, loop=False, pos=pos, layer=None, kbd="swallow")
+            proc = play_omx(path, loop=False, pos=pos, layer=foreground_layer(), kbd="swallow")
             log_event(
                 "random_clip_start",
                 file=os.path.basename(path),
@@ -1180,6 +1233,10 @@ def random_mode_loop():
                 clip_seconds=clip_seconds,
                 duration=round(float(dur), 3) if dur else 0,
                 launch_ms=getattr(proc, "pitv_launch_ms", None),
+                clip_length=RANDOM_CLIP_LENGTH,
+                guard=RANDOM_GUARD,
+                repeat_style=RANDOM_REPEAT_STYLE,
+                static=bool(STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO)),
             )
             log_diag(
                 "random_clip_start",
@@ -1191,6 +1248,10 @@ def random_mode_loop():
                 clip_seconds=clip_seconds,
                 duration=round(float(dur), 3) if dur else 0,
                 launch_ms=getattr(proc, "pitv_launch_ms", None),
+                clip_length=RANDOM_CLIP_LENGTH,
+                guard=RANDOM_GUARD,
+                repeat_style=RANDOM_REPEAT_STYLE,
+                static=bool(STATIC_BACKGROUND and os.path.exists(STATIC_VIDEO)),
             )
             probe_startup(proc, path, "random_clip", pos)
 
@@ -1219,10 +1280,19 @@ def random_mode_loop():
                 prior_exit=proc.poll(),
             )
             if exit_reason == "usb_removed":
+                if static_proc:
+                    stop_proc(static_proc, fast=True)
+                    killed_static = kill_static_processes()
+                    log_event("static_background_stopped", reason="random_usb_removed", killed=killed_static)
+                    static_proc = None
                 println("Please insert USB...")
                 wait_for_usb_restore("random_mode_usb_removed")
 
     finally:
+        try:
+            stop_proc(static_proc, fast=True)
+        except Exception:
+            pass
         restore_tty()
 
 # ---------- LIVE TV (global time with per-title clocks) ----------

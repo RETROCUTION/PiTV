@@ -15,13 +15,19 @@ DEFAULTS = {
     "channel_max_seconds": 20,
     "audio_output": "DEFAULT",   # DEFAULT or ALSA
     "folders": ["ROOT"],         # NEW: which folders to play from (ROOT = USB root)
-    "selected_videos": [],        # Looper: exact video choices, relative to USB root
+    "selected_videos": [],        # Looper/Random: exact video choices, relative to USB root
     "player_file": "",           # Video Player: single video, relative to USB root
+    "random_clip_length": "SHORT", # SHORT, MEDIUM, LONG
+    "random_guard": "NORMAL",     # OFF, NORMAL, STRICT
+    "random_repeat": "FULLY RANDOM", # FULLY RANDOM, CYCLE MOVIES FIRST
 }
 
 MODES = ["BASIC", "BASIC_CRT", "LIVE_TV", "LIVE_TV_CRT", "VIDEO_PLAYER", "VIDEO_PLAYER_CRT", "RANDOM", "RANDOM_CRT"]
 HOME_MODES = ["TV", "LOOPER", "VIDEO PLAYER", "RANDOM MODE"]
 AUDIO_CHOICES = ["DEFAULT", "ALSA"]
+RANDOM_CLIP_CHOICES = ["SHORT", "MEDIUM", "LONG"]
+RANDOM_GUARD_CHOICES = ["NORMAL", "STRICT", "OFF"]
+RANDOM_REPEAT_CHOICES = ["FULLY RANDOM", "CYCLE MOVIES FIRST"]
 VIDEO_FORMATS = (".mp4", ".mkv", ".mov", ".avi", ".m4v")
 USB_STATE_DIR_NAME = ".pitv"
 USB_TV_STATE_NAME = "tv_state.json"
@@ -181,6 +187,15 @@ def load_config():
         cfg["selected_videos"] = []
     cfg["selected_videos"] = [str(x) for x in cfg["selected_videos"] if str(x).strip()]
     cfg["player_file"] = str(cfg.get("player_file", "") or "")
+    cfg["random_clip_length"] = str(cfg.get("random_clip_length", DEFAULTS["random_clip_length"]) or "").upper()
+    if cfg["random_clip_length"] not in RANDOM_CLIP_CHOICES:
+        cfg["random_clip_length"] = DEFAULTS["random_clip_length"]
+    cfg["random_guard"] = str(cfg.get("random_guard", DEFAULTS["random_guard"]) or "").upper()
+    if cfg["random_guard"] not in RANDOM_GUARD_CHOICES:
+        cfg["random_guard"] = DEFAULTS["random_guard"]
+    cfg["random_repeat"] = str(cfg.get("random_repeat", DEFAULTS["random_repeat"]) or "").upper()
+    if cfg["random_repeat"] not in RANDOM_REPEAT_CHOICES:
+        cfg["random_repeat"] = DEFAULTS["random_repeat"]
     # clamp
     clamp_surf_pair(cfg)
     return cfg
@@ -257,6 +272,13 @@ def selected_video_summary(cfg):
     if len(vids) == 1:
         return "1 video selected"
     return f"{len(vids)} videos"
+
+def cycle_choice(choices, current, step):
+    try:
+        idx = choices.index(current)
+    except ValueError:
+        idx = 0
+    return choices[(idx + step) % len(choices)]
 
 def player_file_summary(cfg):
     p = cfg.get("player_file", "")
@@ -451,7 +473,12 @@ def mode_config_rows(cfg, edit_field=None, edit_text=""):
         if home_mode == "RANDOM MODE":
             rows = [
                 ("Folder >", f"{selected_folder_summary(cfg)}"),
+                ("Videos >", f"{selected_video_summary(cfg)}"),
                 ("Display", f"{display_profile(cfg)}"),
+                ("Static", bool_txt(cfg["static_background"]).strip()),
+                ("Clip Length", cfg["random_clip_length"].title()),
+                ("Guard", cfg["random_guard"].title()),
+                ("Repeat Style", cfg["random_repeat"].title()),
             ]
         else:
             rows = [
@@ -1276,6 +1303,12 @@ def run_menu(stdscr):
                 elif clean == "Max Sec":
                     cfg["channel_max_seconds"] += step
                     clamp_surf_pair(cfg)
+                elif clean == "Clip Length":
+                    cfg["random_clip_length"] = cycle_choice(RANDOM_CLIP_CHOICES, cfg["random_clip_length"], step)
+                elif clean == "Guard":
+                    cfg["random_guard"] = cycle_choice(RANDOM_GUARD_CHOICES, cfg["random_guard"], step)
+                elif clean == "Repeat Style":
+                    cfg["random_repeat"] = cycle_choice(RANDOM_REPEAT_CHOICES, cfg["random_repeat"], step)
 
             else:  # page == "more"
                 if clean == "Audio Output":
