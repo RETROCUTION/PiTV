@@ -235,27 +235,27 @@ def audio_txt(v):
 
 def selected_folder_summary(cfg):
     fol = cfg.get("folders", ["ROOT"])
-    if "ROOT" in fol and len(fol) == 1:
-        return "ROOT"
-    show = [x for x in fol if x != "ROOT"]
-    show.sort()
-    if "ROOT" in fol:
-        show.insert(0, "ROOT")
-    if len(show) <= 3:
-        return ", ".join(show)
-    return ", ".join(show[:2]) + f", +{len(show)-2}"
+    count = len(fol) if isinstance(fol, list) else 0
+    if count == 1:
+        return "1 folder selected"
+    return f"{count} folders selected"
 
 def selected_video_summary(cfg):
     vids = [v for v in cfg.get("selected_videos", []) if v]
     if not vids:
-        return "Folders"
+        return "0 videos selected"
     if len(vids) == 1:
-        return os.path.basename(vids[0])
+        return "1 video selected"
     return f"{len(vids)} videos"
 
 def player_file_summary(cfg):
     p = cfg.get("player_file", "")
     return os.path.basename(p) if p else "Choose file"
+
+def sync_selected_videos_to_folders(cfg):
+    available = list_usb_videos(cfg.get("folders", ["ROOT"]))
+    current = [v for v in cfg.get("selected_videos", []) if v in set(available)]
+    cfg["selected_videos"] = current if current else available
 
 def is_usb_mounted():
     try:
@@ -398,7 +398,12 @@ def home_rows(cfg):
     return rows, actions, 1
 
 def clean_label(label):
-    return label.replace("> ", "").replace("*", "").strip()
+    text = str(label).replace("*", "").strip()
+    while text.endswith(">"):
+        text = text[:-1].strip()
+    if text.startswith(">"):
+        text = text[1:].strip()
+    return text
 
 def mode_config_rows(cfg, edit_field=None, edit_text=""):
     home_mode = current_home_mode(cfg)
@@ -419,8 +424,9 @@ def mode_config_rows(cfg, edit_field=None, edit_text=""):
         ]
     elif home_mode == "LOOPER":
         rows = [
+            ("Folder >", f"{selected_folder_summary(cfg)}"),
             ("Videos >", f"{selected_video_summary(cfg)}"),
-            ("Folders >", f"{selected_folder_summary(cfg)}"),
+            ("Playback Order >", f"{selected_video_summary(cfg)}"),
             ("Display", f"{display_profile(cfg)}"),
             ("Shuffle", bool_txt(cfg["shuffle_videos"]).strip()),
             ("Static", bool_txt(cfg["static_background"]).strip()),
@@ -701,8 +707,8 @@ def list_usb_folders():
         pass
     return items
 
-def list_usb_videos():
-    """Return video file paths relative to the USB root."""
+def list_usb_videos(folders=None):
+    """Return video file paths relative to the USB root, optionally scoped to selected folders."""
     items = []
     mount_usb_for_menu()
 
@@ -719,17 +725,31 @@ def list_usb_videos():
         except Exception:
             pass
 
-    add_from_dir(MOUNT_PATH)
-    try:
-        for folder in sorted(os.listdir(MOUNT_PATH)):
-            fl = folder.lower()
-            if _is_osx_junk(fl) or fl in HIDDEN_FOLDER_NAMES:
-                continue
-            p = os.path.join(MOUNT_PATH, folder)
-            if os.path.isdir(p):
-                add_from_dir(p, folder)
-    except Exception:
-        pass
+    if folders is None:
+        add_from_dir(MOUNT_PATH)
+        try:
+            for folder in sorted(os.listdir(MOUNT_PATH)):
+                fl = folder.lower()
+                if _is_osx_junk(fl) or fl in HIDDEN_FOLDER_NAMES:
+                    continue
+                p = os.path.join(MOUNT_PATH, folder)
+                if os.path.isdir(p):
+                    add_from_dir(p, folder)
+        except Exception:
+            pass
+        return items
+
+    if not folders:
+        folders = ["ROOT"]
+    if "ROOT" in folders:
+        add_from_dir(MOUNT_PATH)
+    for folder in sorted(f for f in folders if f != "ROOT"):
+        fl = folder.lower()
+        if _is_osx_junk(fl) or fl in HIDDEN_FOLDER_NAMES:
+            continue
+        p = os.path.join(MOUNT_PATH, folder)
+        if os.path.isdir(p):
+            add_from_dir(p, folder)
     return items
 
 def folder_picker(stdscr, initial_selected):
@@ -749,7 +769,7 @@ def folder_picker(stdscr, initial_selected):
             mark = "x" if name in selected else " "
             rows_top.append((f"[{mark}] {name}", ""))
 
-        rows_bottom = [("DONE",""), ("BACK","")]
+        rows_bottom = [("DONE","")]
         draw_box(stdscr, "SELECT VIDEO FOLDERS", rows_top, rows_bottom, sel_idx)
 
         ch = stdscr.getch()
@@ -777,14 +797,12 @@ def folder_picker(stdscr, initial_selected):
                     if not selected:
                         selected = {"ROOT"}
                     return list(sorted(selected, key=lambda s: (s!="ROOT", s.lower())))
-                elif label == "BACK":
-                    return initial_selected
         elif ch in (27,):  # ESC
             return initial_selected
 
-def video_picker(stdscr, initial_selected=None, multi=True):
+def video_picker(stdscr, initial_selected=None, multi=True, folders=None):
     """Pick one or more videos from USB. Returns list for multi, string for single."""
-    options = list_usb_videos()
+    options = list_usb_videos(folders)
     if not options:
         popup_wait_key(stdscr, "VIDEOS", ["No video files found on USB."])
         return (initial_selected or []) if multi else (initial_selected or "")
@@ -806,7 +824,7 @@ def video_picker(stdscr, initial_selected=None, multi=True):
             value = parent if parent else "ROOT"
             rows_top.append((label, value))
 
-        rows_bottom = [("DONE",""), ("CLEAR",""), ("BACK","")] if multi else [("CLEAR",""), ("BACK","")]
+        rows_bottom = [("DONE",""), ("CLEAR","")] if multi else [("CLEAR","")]
         title = "SELECT VIDEOS" if multi else "SELECT VIDEO"
         draw_box(stdscr, title, rows_top, rows_bottom, sel_idx)
 
@@ -837,10 +855,42 @@ def video_picker(stdscr, initial_selected=None, multi=True):
                         selected = set()
                     else:
                         return ""
-                if label == "BACK":
-                    return (initial_selected or []) if multi else (initial_selected or "")
         elif ch in (27,):
             return (initial_selected or []) if multi else (initial_selected or "")
+
+def playback_order_editor(stdscr, selected_videos):
+    order = [v for v in selected_videos if v]
+    if not order:
+        popup_wait_key(stdscr, "PLAYBACK ORDER", ["Select videos first."])
+        return selected_videos
+    sel_idx = 0
+    stdscr.timeout(-1)
+
+    while True:
+        rows_top = []
+        for i, rel in enumerate(order):
+            parent = os.path.dirname(rel)
+            rows_top.append((f"{i + 1}. {os.path.basename(rel)}", parent if parent else "ROOT"))
+        rows_bottom = [("DONE","")]
+        draw_box(stdscr, "PLAYBACK ORDER", rows_top, rows_bottom, sel_idx)
+
+        ch = stdscr.getch()
+        total = len(rows_top) + len(rows_bottom)
+        if ch in (curses.KEY_UP, ord("k")):
+            sel_idx = (sel_idx - 1) % total
+        elif ch in (curses.KEY_DOWN, ord("j")):
+            sel_idx = (sel_idx + 1) % total
+        elif ch == curses.KEY_LEFT and sel_idx < len(order) and sel_idx > 0:
+            order[sel_idx - 1], order[sel_idx] = order[sel_idx], order[sel_idx - 1]
+            sel_idx -= 1
+        elif ch == curses.KEY_RIGHT and sel_idx < len(order) - 1:
+            order[sel_idx + 1], order[sel_idx] = order[sel_idx], order[sel_idx + 1]
+            sel_idx += 1
+        elif ch in (curses.KEY_ENTER, 10, 13, ord(" ")):
+            if sel_idx >= len(rows_top):
+                return order
+        elif ch in (27,):
+            return selected_videos
 
 # ---------- Actions & helpers ----------
 def kill_omx_leftovers():
@@ -1195,18 +1245,28 @@ def run_menu(stdscr):
 
             elif page == "mode":
                 hm = current_home_mode(cfg)
-                if clean.startswith("Folders"):
+                if clean in ("Folder", "Folders"):
                     stdscr.timeout(-1)
                     new_sel = folder_picker(stdscr, cfg.get("folders", ["ROOT"]))
                     cfg["folders"] = new_sel if new_sel else ["ROOT"]
+                    sync_selected_videos_to_folders(cfg)
                     continue
                 if clean == "Videos":
                     stdscr.timeout(-1)
-                    cfg["selected_videos"] = video_picker(stdscr, cfg.get("selected_videos", []), multi=True)
+                    cfg["selected_videos"] = video_picker(
+                        stdscr,
+                        cfg.get("selected_videos", []),
+                        multi=True,
+                        folders=cfg.get("folders", ["ROOT"]),
+                    )
+                    continue
+                if clean == "Playback Order":
+                    stdscr.timeout(-1)
+                    cfg["selected_videos"] = playback_order_editor(stdscr, cfg.get("selected_videos", []))
                     continue
                 if clean == "Video":
                     stdscr.timeout(-1)
-                    cfg["player_file"] = video_picker(stdscr, cfg.get("player_file", ""), multi=False)
+                    cfg["player_file"] = video_picker(stdscr, cfg.get("player_file", ""), multi=False, folders=None)
                     continue
                 if clean.startswith("START "):
                     if not usb_ready_for_playback():

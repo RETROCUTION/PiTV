@@ -400,7 +400,7 @@ def get_video_files():
                     selected.append(p)
                     seen_selected.add(p)
             if selected:
-                return sorted(selected)
+                return selected
 
         files = []
         seen  = set()
