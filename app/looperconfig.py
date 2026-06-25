@@ -334,6 +334,42 @@ def count_selected_videos(cfg):
         pass
     return count
 
+def count_total_videos():
+    count = 0
+    try:
+        mount_usb_for_menu()
+        if not os.path.isdir(MOUNT_PATH):
+            return 0
+
+        def count_dir(path):
+            total = 0
+            try:
+                for f in os.listdir(path):
+                    fl = f.lower()
+                    if _is_osx_junk(fl):
+                        continue
+                    p = os.path.join(path, f)
+                    if os.path.isfile(p) and fl.endswith(VIDEO_FORMATS):
+                        total += 1
+            except Exception:
+                pass
+            return total
+
+        count += count_dir(MOUNT_PATH)
+        try:
+            for name in os.listdir(MOUNT_PATH):
+                fl = name.lower()
+                if _is_osx_junk(fl) or fl in HIDDEN_FOLDER_NAMES:
+                    continue
+                p = os.path.join(MOUNT_PATH, name)
+                if os.path.isdir(p):
+                    count += count_dir(p)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return count
+
 def usb_status_lines(cfg):
     mounted = is_usb_mounted() or mount_usb_for_menu()
     if mounted:
@@ -341,8 +377,8 @@ def usb_status_lines(cfg):
             fs = subprocess.check_output(["findmnt", "-n", "-o", "FSTYPE", MOUNT_PATH], text=True).strip()
         except Exception:
             fs = "mounted"
-        vids = count_selected_videos(cfg)
-        return [f"USB: {vids} videos   {fs or 'mounted'}",
+        vids = count_total_videos()
+        return [f"USB: {vids} videos detected   {fs or 'mounted'}",
                 f"Folders: {selected_folder_summary(cfg)}"]
     return ["USB: Not connected", "Insert USB drive"]
 
@@ -356,7 +392,7 @@ def home_rows(cfg):
     for name in HOME_MODES:
         rows.append((name, ""))
     rows.append(("  OPTIONS", ""))
-    actions = [("START PITV",""), ("SHUTDOWN","")]
+    actions = [("SHUTDOWN","")]
     return rows, actions, 1
 
 def clean_label(label):
@@ -409,7 +445,7 @@ def build_rows_main(cfg):
             ("Surf Max (sec)", f"[{cfg['channel_max_seconds']:>4}]"),
         ]
     settings += [("MORE OPTIONS >","")]
-    actions = [("START PITV",""), ("SHUTDOWN","")]
+    actions = [("SHUTDOWN","")]
     return settings, actions, 1  # one blank spacer
 
 def build_rows_more(cfg):
@@ -477,8 +513,8 @@ def draw_box(stdscr, title, rows_top, rows_bottom, sel_idx, status_lines=None, h
             pass
 
     put(top, f"PiTV  {VERSION_TEXT}", attr(PAIR_NORMAL, curses.A_BOLD))
-    put(top + 1, title[:width], attr(PAIR_ACCENT, curses.A_BOLD))
-    put(top + 2, status[:width], attr(PAIR_DIM))
+    put(top + 1, status[:width], attr(PAIR_DIM))
+    put(top + 2, title[:width], attr(PAIR_ACCENT, curses.A_BOLD))
 
     def format_row(label, value, selected=False):
         marker = ">" if selected else " "
@@ -1011,7 +1047,7 @@ def run_menu(stdscr):
             rows_top, rows_bottom, _ = home_rows(cfg)
             draw_box(
                 stdscr,
-                "SELECT MODE",
+                "MODE SELECT",
                 rows_top,
                 rows_bottom,
                 sel,
@@ -1142,12 +1178,6 @@ def run_menu(stdscr):
                     continue
                 if clean == "OPTIONS":
                     page, sel = "more", 0
-                    continue
-                if clean == "START PITV":
-                    save_config(cfg)                # ONLY here do we write the file
-                    launch_looper_and_wait(stdscr)  # returns when looper exits
-                    cfg = load_config()             # reload cfg after returning
-                    sel = 0
                     continue
                 if clean == "SHUTDOWN":
                     if confirm(stdscr, "SHUTDOWN", ["Power off the Raspberry Pi?"]):

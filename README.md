@@ -41,9 +41,9 @@ The installer sets up:
 - quiet boot cleanup
 - optional PCM5102 / HiFiBerry DAC-style audio setup
 
-After reboot, PiTV should open the menu on the connected display. Configure
-your mode, display profile, audio output, USB folders, and playback options,
-then select `START PITV`.
+After reboot, PiTV should open the menu on the connected display. Choose a
+mode, configure its display/audio/folder/playback options, then use the
+mode screen's `START` item.
 
 ## Modes
 
