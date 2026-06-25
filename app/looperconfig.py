@@ -773,10 +773,15 @@ def folder_picker(stdscr, initial_selected):
         draw_box(stdscr, "SELECT VIDEO FOLDERS", rows_top, rows_bottom, sel_idx)
 
         ch = stdscr.getch()
+        total = len(rows_top) + len(rows_bottom)
         if ch in (curses.KEY_UP, ord('k')):
-            sel_idx = (sel_idx - 1) % (len(rows_top) + len(rows_bottom))
+            sel_idx = (sel_idx - 1) % total
         elif ch in (curses.KEY_DOWN, ord('j')):
-            sel_idx = (sel_idx + 1) % (len(rows_top) + len(rows_bottom))
+            sel_idx = (sel_idx + 1) % total
+        elif ch == curses.KEY_LEFT:
+            sel_idx = 0
+        elif ch == curses.KEY_RIGHT:
+            sel_idx = max(0, len(rows_top) - 1)
         elif ch in (ord('a'), ord('A')):  # select all
             selected = set(options)
         elif ch in (ord('n'), ord('N')):  # select none (but keep ROOT disabled until user picks something else)
@@ -797,8 +802,10 @@ def folder_picker(stdscr, initial_selected):
                     if not selected:
                         selected = {"ROOT"}
                     return list(sorted(selected, key=lambda s: (s!="ROOT", s.lower())))
-        elif ch in (27,):  # ESC
-            return initial_selected
+        elif ch in (27,):  # ESC saves like DONE
+            if not selected:
+                selected = {"ROOT"}
+            return list(sorted(selected, key=lambda s: (s!="ROOT", s.lower())))
 
 def video_picker(stdscr, initial_selected=None, multi=True, folders=None):
     """Pick one or more videos from USB. Returns list for multi, string for single."""
@@ -834,6 +841,10 @@ def video_picker(stdscr, initial_selected=None, multi=True, folders=None):
             sel_idx = (sel_idx - 1) % total
         elif ch in (curses.KEY_DOWN, ord('j')):
             sel_idx = (sel_idx + 1) % total
+        elif ch == curses.KEY_LEFT:
+            sel_idx = 0
+        elif ch == curses.KEY_RIGHT:
+            sel_idx = max(0, len(rows_top) - 1)
         elif multi and ch in (ord('a'), ord('A')):
             selected = set(options)
         elif ch in (curses.KEY_ENTER, 10, 13, ord(' ')):
@@ -855,8 +866,10 @@ def video_picker(stdscr, initial_selected=None, multi=True, folders=None):
                         selected = set()
                     else:
                         return ""
-        elif ch in (27,):
-            return (initial_selected or []) if multi else (initial_selected or "")
+        elif ch in (27,):  # ESC saves like DONE
+            if multi:
+                return [rel for rel in options if rel in selected]
+            return next(iter(selected), "") if selected else (initial_selected or "")
 
 def playback_order_editor(stdscr, selected_videos):
     order = [v for v in selected_videos if v]
@@ -881,16 +894,18 @@ def playback_order_editor(stdscr, selected_videos):
         elif ch in (curses.KEY_DOWN, ord("j")):
             sel_idx = (sel_idx + 1) % total
         elif ch == curses.KEY_LEFT and sel_idx < len(order) and sel_idx > 0:
-            order[sel_idx - 1], order[sel_idx] = order[sel_idx], order[sel_idx - 1]
-            sel_idx -= 1
+            item = order.pop(sel_idx)
+            order.insert(0, item)
+            sel_idx = 0
         elif ch == curses.KEY_RIGHT and sel_idx < len(order) - 1:
-            order[sel_idx + 1], order[sel_idx] = order[sel_idx], order[sel_idx + 1]
-            sel_idx += 1
+            item = order.pop(sel_idx)
+            order.append(item)
+            sel_idx = len(order) - 1
         elif ch in (curses.KEY_ENTER, 10, 13, ord(" ")):
             if sel_idx >= len(rows_top):
                 return order
-        elif ch in (27,):
-            return selected_videos
+        elif ch in (27,):  # ESC saves like DONE
+            return order
 
 # ---------- Actions & helpers ----------
 def kill_omx_leftovers():
@@ -1278,7 +1293,7 @@ def run_menu(stdscr):
                     save_config(cfg)
                     launch_looper_and_wait(stdscr)
                     cfg = load_config()
-                    page, sel = "home", 0
+                    page, sel = "mode", 0
                     continue
                 if clean == "BACK":
                     page, sel = "home", 0
