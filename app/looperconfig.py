@@ -779,13 +779,13 @@ def folder_picker(stdscr, initial_selected):
         ch = stdscr.getch()
         total = len(rows_top) + len(rows_bottom)
         if ch in (curses.KEY_UP, ord('k')):
-            sel_idx = (sel_idx - 1) % total
+            sel_idx = max(0, sel_idx - 1)
         elif ch in (curses.KEY_DOWN, ord('j')):
-            sel_idx = (sel_idx + 1) % total
+            sel_idx = min(total - 1, sel_idx + 1)
         elif ch == curses.KEY_LEFT:
             sel_idx = 0
         elif ch == curses.KEY_RIGHT:
-            sel_idx = max(0, len(rows_top) - 1)
+            sel_idx = total - 1
         elif ch in (ord('a'), ord('A')):  # select all
             selected = set(options)
         elif ch in (ord('n'), ord('N')):  # select none (but keep ROOT disabled until user picks something else)
@@ -842,13 +842,13 @@ def video_picker(stdscr, initial_selected=None, multi=True, folders=None):
         ch = stdscr.getch()
         total = len(rows_top) + len(rows_bottom)
         if ch in (curses.KEY_UP, ord('k')):
-            sel_idx = (sel_idx - 1) % total
+            sel_idx = max(0, sel_idx - 1)
         elif ch in (curses.KEY_DOWN, ord('j')):
-            sel_idx = (sel_idx + 1) % total
+            sel_idx = min(total - 1, sel_idx + 1)
         elif ch == curses.KEY_LEFT:
             sel_idx = 0
         elif ch == curses.KEY_RIGHT:
-            sel_idx = max(0, len(rows_top) - 1)
+            sel_idx = total - 1
         elif multi and ch in (ord('a'), ord('A')):
             selected = set(options)
         elif ch in (curses.KEY_ENTER, 10, 13, ord(' ')):
@@ -894,9 +894,9 @@ def playback_order_editor(stdscr, selected_videos):
         ch = stdscr.getch()
         total = len(rows_top) + len(rows_bottom)
         if ch in (curses.KEY_UP, ord("k")):
-            sel_idx = (sel_idx - 1) % total
+            sel_idx = max(0, sel_idx - 1)
         elif ch in (curses.KEY_DOWN, ord("j")):
-            sel_idx = (sel_idx + 1) % total
+            sel_idx = min(total - 1, sel_idx + 1)
         elif ch == curses.KEY_LEFT and sel_idx < len(order) and sel_idx > 0:
             item = order.pop(sel_idx)
             order.insert(0, item)
@@ -1167,10 +1167,10 @@ def run_menu(stdscr):
         # Navigation within selectable rows
         if ch in (curses.KEY_UP, ord('k')):
             finalize_duration_edit()
-            sel = (sel - 1) % len(selectable)
+            sel = max(0, sel - 1)
         elif ch in (curses.KEY_DOWN, ord('j')):
             finalize_duration_edit()
-            sel = (sel + 1) % len(selectable)
+            sel = min(len(selectable) - 1, sel + 1)
 
         # Inline duration typing on the mode screen.
         elif page == "mode" and ord("0") <= ch <= ord("9"):
